@@ -456,7 +456,7 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                 const result = await runProcess({
                     name: `mp4-gen-${cameraKey}-${startSegment}`,
                     cmd: '/usr/bin/ffmpeg',
-                    args: ['-y', '-i', `http://localhost:${port}/video/${startSegment}/${seconds}/${cameraKey}/stream.m3u8${qs ? `?${qs}` : ''}`, '-c', 'copy', serve],
+                    args: ['-y', '-i', `http://127.0.0.1:${port}/video/${startSegment}/${seconds}/${cameraKey}/stream.m3u8${qs ? `?${qs}` : ''}`, '-c', 'copy', serve],
                     timeout: 50000
                 });
 
