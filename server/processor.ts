@@ -532,6 +532,9 @@ export async function controllerFFmpeg(
 
         deps.logger.info('Starting streaming process', { name, pid: 'pending' });
 
+        // Remove stale playlist to prevent appending to corrupted data from previous run
+        await fs.unlink(streamFile).catch(() => {});
+
         // Determine stream source: explicit streamSource, or construct from ip/passwd
         const streamSource = cameraEntry.streamSource || 
             `rtsp://admin:${cameraEntry.passwd}@${cameraEntry.ip}:554/h264Preview_01_main`;
