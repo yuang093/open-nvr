@@ -69,15 +69,21 @@ The recommended setup is a local Prometheus agent that scrapes the NVR `/metrics
 
 ### 1. Install Prometheus
 
+Download the Prometheus binary matching your architecture (`amd64`, `arm64`, etc.):
+
 ```bash
-# Download latest Prometheus
-wget https://github.com/prometheus/prometheus/releases/download/v2.53.0/prometheus-2.53.0.linux-amd64.tar.gz
-tar xvfz prometheus-2.53.0.linux-amd64.tar.gz
-sudo mv prometheus-2.53.0.linux-amd64/prometheus /usr/local/bin/
-sudo mv prometheus-2.53.0.linux-amd64/promtool /usr/local/bin/
+# Example for arm64 (e.g. Rock 5B, Raspberry Pi 4/5)
+ARCH=arm64
+VERSION=2.53.0
+
+wget https://github.com/prometheus/prometheus/releases/download/v${VERSION}/prometheus-${VERSION}.linux-${ARCH}.tar.gz
+tar xzf prometheus-${VERSION}.linux-${ARCH}.tar.gz
+sudo mv prometheus-${VERSION}.linux-${ARCH}/prometheus /usr/local/bin/
+sudo mv prometheus-${VERSION}.linux-${ARCH}/promtool /usr/local/bin/
+rm -rf prometheus-${VERSION}.linux-${ARCH}*
 ```
 
-### 2. Create Azure Resources
+### 2. Create Azure Monitor Workspace
 
 ```bash
 # Create an Azure Monitor workspace (hosts managed Prometheus)
@@ -85,27 +91,66 @@ az monitor account create \
   --name nvr-monitor \
   --resource-group <your-rg> \
   --location <your-location>
+```
 
-# Note the metrics ingestion endpoint from the output, e.g.:
-# https://nvr-monitor-xxxx.region.metrics.monitor.azure.com
+From the output, note:
+- The **metrics ingestion endpoint** — find it in the Azure portal under your Azure Monitor workspace → Overview → "Metrics ingestion endpoint", or query the Data Collection Endpoint:
+  ```bash
+  az monitor data-collection endpoint show \
+    --name nvr-monitor \
+    --resource-group MA_nvr-monitor_<location>_managed \
+    --query metricsIngestion.endpoint -o tsv
+  ```
+- The **Data Collection Rule (DCR) immutable ID** — find it in the portal or query:
+  ```bash
+  az monitor data-collection rule list \
+    --query "[?contains(name,'nvr-monitor')].{name:name, immutableId:immutableId, resourceGroup:resourceGroup}" \
+    -o table
+  ```
 
+The full remote write URL combines these:
+```
+https://<metrics-ingestion-endpoint>/dataCollectionRules/<dcr-immutable-id>/streams/Microsoft-PrometheusMetrics/api/v1/write?api-version=2023-04-24
+```
+
+> **Note:** Azure Monitor creates a managed resource group (e.g. `MA_nvr-monitor_<location>_managed`) containing the DCR and DCE. You'll need this resource group name for role assignments below.
+
+### 3. Create Entra ID App Registration
+
+```bash
 # Create an Entra ID app registration for authentication
-az ad app create --display-name nvr-prometheus-writer
+az ad app create --display-name nvr-prometheus-writer --query appId -o tsv
+# Note the appId from the output
+
+# Create a service principal
 az ad sp create --id <app-id>
 
 # Create a client secret
 az ad app credential reset --id <app-id> --append
-
 # Note the appId, password (client secret), and tenant from the output
+```
 
-# Assign "Monitoring Metrics Publisher" role on the Azure Monitor workspace
+### 4. Assign Permissions
+
+The service principal needs the **"Monitoring Metrics Publisher"** role on the **Data Collection Rule (DCR)** in the managed resource group. Assigning the role on the Azure Monitor workspace alone is not sufficient.
+
+```bash
+# Find the DCR resource ID
+DCR_ID=$(az monitor data-collection rule list \
+  --query "[?contains(name,'nvr-monitor')].id" -o tsv)
+
+# Assign "Monitoring Metrics Publisher" role on the DCR
 az role assignment create \
   --assignee <app-id> \
   --role "Monitoring Metrics Publisher" \
-  --scope /subscriptions/<sub-id>/resourceGroups/<your-rg>/providers/microsoft.monitor/accounts/nvr-monitor
+  --scope $DCR_ID
 ```
 
-### 3. Configure Prometheus
+> **Important:** Azure RBAC role assignments can take up to 5–10 minutes to propagate. If you see 403 errors immediately after assigning the role, wait and retry.
+
+> **Alternative: Managed Identity** — If running on an Azure VM, assign the VM's managed identity the "Monitoring Metrics Publisher" role on the DCR instead of using client secrets. Use only the `managed_identity` section in the Prometheus config below.
+
+### 5. Configure Prometheus
 
 Create `/etc/prometheus/prometheus.yml`:
 
@@ -119,20 +164,23 @@ scrape_configs:
       - targets: ['localhost:8080']
 
 remote_write:
-  - url: 'https://<your-workspace>.metrics.monitor.azure.com/api/v1/write'
+  - url: 'https://<metrics-ingestion-endpoint>/dataCollectionRules/<dcr-immutable-id>/streams/Microsoft-PrometheusMetrics/api/v1/write?api-version=2023-04-24'
     azuread:
       cloud: 'AzurePublic'
-      managed_identity:
-        client_id: '<app-id>'
       oauth:
         client_id: '<app-id>'
         client_secret: '<client-secret>'
         tenant_id: '<tenant-id>'
 ```
 
-> **Alternative: Managed Identity** — If running on an Azure VM, use managed identity instead of client secrets. Assign the VM's identity the "Monitoring Metrics Publisher" role and set `managed_identity.client_id` only.
+Protect the config file since it contains credentials:
 
-### 4. Run Prometheus as a systemd service
+```bash
+sudo chmod 600 /etc/prometheus/prometheus.yml
+sudo chown prometheus:prometheus /etc/prometheus/prometheus.yml
+```
+
+### 6. Run Prometheus as a systemd service
 
 Create `/etc/systemd/system/prometheus.service`:
 
@@ -146,7 +194,7 @@ Type=simple
 User=prometheus
 ExecStart=/usr/local/bin/prometheus \
   --config.file=/etc/prometheus/prometheus.yml \
-  --storage.tsdb.retention.time=2h \
+  --storage.agent.path=/var/lib/prometheus/agent \
   --web.listen-address=:9090 \
   --enable-feature=agent
 Restart=always
@@ -154,6 +202,8 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 ```
+
+> The `--enable-feature=agent` flag runs Prometheus in agent mode — it only scrapes and remote-writes, with no local TSDB storage. Do not use `--storage.tsdb.*` flags in agent mode; use `--storage.agent.path` for the WAL directory.
 
 ```bash
 sudo useradd --no-create-home --shell /bin/false prometheus
@@ -163,19 +213,20 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now prometheus
 ```
 
-> The `--enable-feature=agent` flag runs Prometheus in agent mode — it only scrapes and remote-writes, using minimal local storage.
-
-### 5. Verify
+### 7. Verify
 
 ```bash
-# Check Prometheus is scraping the NVR
-curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[].health'
+# Check the service is running
+sudo systemctl status prometheus
 
-# Check NVR metrics directly
+# Check for errors in the logs (no output = healthy)
+journalctl -u prometheus --no-pager --since "1 min ago" | grep -i error
+
+# Check NVR metrics are being exposed
 curl -s http://localhost:8080/metrics | head -20
 ```
 
-### 6. Visualize with Azure Managed Grafana
+### 8. Visualize with Azure Managed Grafana
 
 1. Create an Azure Managed Grafana instance in the Azure portal
 2. Link it to your Azure Monitor workspace (done automatically if in the same resource group)

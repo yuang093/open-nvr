@@ -1,0 +1,411 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Movement Detection",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Motion Active %",
+      "description": "Percentage of API polls where motion was detected per camera — 100% means continuous motion",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": { "mode": "none" }
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "rate(nvr_movement_detection_api_calls_total{result=\"detected\"}[$__rate_interval]) / on(camera) group_left() sum by (camera) (rate(nvr_movement_detection_api_calls_total[$__rate_interval]))",
+          "legendFormat": "{{camera}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Movements Created",
+      "description": "New movement events created per camera, shown as bars — each bar represents movements starting in that interval",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": { "mode": "none" },
+            "barMaxWidth": 20
+          },
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum", "max", "lastNotNull"] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "increase(nvr_movements_created_total[$__rate_interval])",
+          "legendFormat": "{{camera}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Movement Duration",
+      "description": "Average duration of finalized movements per camera — shows how long motion events last",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": { "mode": "none" },
+            "barMaxWidth": 20
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "rate(nvr_movement_duration_seconds_sum[$__rate_interval]) / rate(nvr_movement_duration_seconds_count[$__rate_interval])",
+          "legendFormat": "{{camera}} avg"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "histogram_quantile(0.95, sum by (le, camera) (rate(nvr_movement_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "{{camera}} p95"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Time Between Movements",
+      "description": "Average gap between movement events per camera — calculated as interval / movements created",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": { "mode": "none" }
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "1 / rate(nvr_movements_created_total[$__rate_interval])",
+          "legendFormat": "{{camera}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Object Detection Pipeline",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Frames Sent vs Received (rate/s)",
+      "description": "Frames sent to ML detector vs results received — a gap indicates frame drops or detector falling behind",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": { "mode": "none" }
+          },
+          "unit": "fps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "rate(nvr_movement_frames_sent_total[$__rate_interval])",
+          "legendFormat": "{{camera}} sent"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "rate(nvr_movement_frames_received_total[$__rate_interval])",
+          "legendFormat": "{{camera}} received"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Frames per Object Detected",
+      "description": "Average number of frames processed per object detected — higher means more frames needed per detection",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": { "mode": "none" }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "rate(nvr_movement_frames_received_total[$__rate_interval]) / on(camera) group_left() sum by (camera) (rate(nvr_ml_objects_detected_total[$__rate_interval]))",
+          "legendFormat": "{{camera}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Objects Detected",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
+      "collapsed": false
+    },
+    {
+      "type": "piechart",
+      "title": "Common Objects (total)",
+      "description": "Distribution of object types detected across all cameras",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 27 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "pieType": "donut",
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "sum by (object_class) (increase(nvr_ml_objects_detected_total[$__range]))",
+          "legendFormat": "{{object_class}}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Objects Detected Over Time (rate/min)",
+      "description": "Rate of objects detected by class across all cameras",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 27 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": { "mode": "normal" }
+          },
+          "unit": "opm"
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum", "lastNotNull"] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "sum by (object_class) (rate(nvr_ml_objects_detected_total[$__rate_interval])) * 60",
+          "legendFormat": "{{object_class}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Latency",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Movement → Object Detection Lag",
+      "description": "Time between movement detection and ML processing start — p50 and p95",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": { "mode": "none" }
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "histogram_quantile(0.50, sum by (le, camera) (rate(nvr_movement_detection_to_processing_lag_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "{{camera}} p50"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "histogram_quantile(0.95, sum by (le, camera) (rate(nvr_movement_detection_to_processing_lag_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "{{camera}} p95"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "ML Per-Frame Inference Latency",
+      "description": "Time to process a single frame through the ML model — p50 and p95",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": { "mode": "none" }
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "histogram_quantile(0.50, sum by (le, camera) (rate(nvr_ml_frame_processing_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "{{camera}} p50"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "$datasource" },
+          "expr": "histogram_quantile(0.95, sum by (le, camera) (rate(nvr_ml_frame_processing_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "{{camera}} p95"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["nvr", "prometheus"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Data Source",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "NVR Overview",
+  "uid": "",
+  "version": 0
+}
