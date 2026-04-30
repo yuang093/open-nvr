@@ -175,7 +175,7 @@ function App() {
       if (mKey) {
         window.location.hash = `play/${cKey}/${mKey}`;
       } else {
-        window.location.hash = '';
+        window.location.hash = `live/${cKey}`;
       }
     } else {
       console.warn(`App() : playVideo : player not ready or cannot find camera, or already playing selected camera/movement`)
@@ -536,6 +536,12 @@ function CCTVControl({currentPlaying, playVideo, showImage}) {
               const camera = result.cameras.find(c => c.key === cKey);
               if (movement && camera) {
                 playVideo(cKey, mKey, movement.movement.startSegment, movement.movement.seconds, camera.segments_prior_to_movement, camera.segments_post_movement, movement.movement.lhs_seg_duration_seq);
+                return;
+              }
+            } else if (hash.startsWith('live/')) {
+              const cKey = hash.slice(5);
+              if (streamingCameras.find(c => c.key === cKey)) {
+                playVideo(cKey);
                 return;
               }
             } else if (hash.startsWith('image/')) {
