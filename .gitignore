@@ -35,3 +35,5 @@ video
 .env
 web.sh
 
+storage/
+*.bak
