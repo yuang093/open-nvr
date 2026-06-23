@@ -13,18 +13,12 @@ type_map = {
 
 
 def ignore_dim_with_zero(_shape, _shape_target):
+    # Filter size=1 dims from data, and size=1 + symbolic (str/None) dims from target
     _shape = [d for d in _shape if d != 1]
-    _shape_target = [d for d in _shape_target if d != 1]
+    _shape_target = [d for d in _shape_target if d != 1 and not isinstance(d, str) and d is not None]
     if len(_shape) != len(_shape_target):
         return False
-    for a, b in zip(_shape, _shape_target):
-        if isinstance(a, str) or a is None:
-            continue
-        if isinstance(b, str) or b is None:
-            continue
-        if a != b:
-            return False
-    return True
+    return all(a == b for a, b in zip(_shape, _shape_target))
 
 
 class ONNX_model_container_py:
@@ -46,24 +40,32 @@ class ONNX_model_container_py:
 
         input_dict = {}
         for i, _input in enumerate(self.sess.get_inputs()):
+            # convert type
             if _input.type in type_map and type_map[_input.type] != input_datas[i].dtype:
                 print('WARNING: force data-{} from {} to {}'.format(i, input_datas[i].dtype, type_map[_input.type]))
                 input_datas[i] = input_datas[i].astype(type_map[_input.type])
 
-            model_shape = _input.shape
+            # Convert symbolic dim names to actual data dims
+            model_shape = list(_input.shape)
             data_shape = list(input_datas[i].shape)
-            if list(model_shape) != data_shape:
-                if ignore_dim_with_zero(data_shape, model_shape):
-                    target_shape = []
-                    for idx in range(len(model_shape)):
-                        dim = model_shape[idx]
-                        if isinstance(dim, str) or dim is None:
-                            target_shape.append(data_shape[idx])
+            if len(model_shape) == len(data_shape):
+                # Substitute symbolic dims with data dims
+                actual_shape = []
+                skip_reshape = True
+                for idx in range(len(model_shape)):
+                    dim = model_shape[idx]
+                    if isinstance(dim, str) or dim is None:
+                        actual_shape.append(data_shape[idx])
+                    elif dim != data_shape[idx]:
+                        if dim == 1:
+                            actual_shape.append(data_shape[idx])
                         else:
-                            target_shape.append(dim)
-                    input_datas[i] = input_datas[i].reshape(tuple(target_shape))
-                else:
-                    assert False, 'input shape{} not match real data shape{}'.format(model_shape, data_shape)
+                            skip_reshape = False
+                            actual_shape.append(dim)
+                    else:
+                        actual_shape.append(dim)
+                if not skip_reshape or tuple(actual_shape) != tuple(data_shape):
+                    input_datas[i] = input_datas[i].reshape(tuple(actual_shape))
             input_dict[_input.name] = input_datas[i]
 
         output_list = []
