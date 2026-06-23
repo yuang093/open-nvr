@@ -20,7 +20,7 @@ content = panel_path.read_text()
 
 # Anchor: the main Dialog closes with `</Dialog> \n\n      {analysisOpen`
 # We need to insert `<>` after `(` and `</>` before `)`
-old_struct = '''return panel.open && (
+old_struct = '''    return panel.open && (
       <Dialog modalType='modal' open={panel.open}>
 '''
 new_struct = '''return panel.open && (
