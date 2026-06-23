@@ -53,12 +53,14 @@ print("[fix] Wrapped opening in Fragment <>")
 # Anchor: modal's `      )}` then `    }` (4-space function close) then blank then `}`
 old_close = '''        </Dialog>
       )}
+      </>
     }
 
 }'''
 new_close = '''        </Dialog>
       )}
       </>
+    )
     }
 
 }'''
