@@ -153,9 +153,12 @@ replace(old_return, new_return, 'wrap return in Fragment (open)')
 
 # 5. Replace the end - add modal then close Fragment
 # Anchor is unique because </Dialog> followed by )} followed by function close }
+# The actual file has: `      </Dialog> \n    )\n    \n}` (with trailing space after </Dialog>)
 old_end = '''      </Dialog>
 
     )
+
+    }
 
 }'''
 new_end = '''      </Dialog>
