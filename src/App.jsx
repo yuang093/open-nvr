@@ -4,7 +4,7 @@ import React, { useEffect, useMemo }  from 'react';
 import Hls from 'hls.js'
 import { PanelSettings } from './PanelSettings.jsx'
 import { PanelStats } from './PanelStats.jsx'
-import { VideoWithOverlay } from './VideoWithOverlay.jsx'
+import { VideoPlayer } from './VideoPlayer.jsx'
 import { ToolbarGroup, Badge, Text, Button, Portal, Toolbar, Menu, MenuTrigger, Tooltip, SplitButton, MenuPopover, MenuList, MenuItem, ToolbarButton, ToolbarDivider, Spinner, tokens, Dialog, DialogTrigger, DialogSurface, DialogTitle, DialogBody, DialogContent, DialogActions } from "@fluentui/react-components";
 import { ArrowMove20Regular, AccessibilityCheckmark20Regular, AccessTime20Regular, Settings16Regular, ArrowDownload16Regular, DataUsageSettings20Regular, Tv16Regular, Video20Regular, VideoAdd20Regular, ArrowRepeatAll20Regular, Filter20Regular, MoreVertical20Regular, Checkmark12Regular, Dismiss12Regular, Clock12Regular, Clock16Regular, ScanDash12Regular, Play20Filled, CalendarLtr16Regular, Database20Regular } from "@fluentui/react-icons";
 
@@ -255,7 +255,7 @@ function App() {
   return (
     <div className="container">
       <div className="video-container" style={{ width: videoWidth, flexShrink: 0 }}>
-        <VideoWithOverlay onReady={handlePlayerReady} play={currentPlaying} imageUrl={displayImage}/>
+        <VideoPlayer onReady={handlePlayerReady} play={currentPlaying} imageUrl={displayImage}/>
       </div>
       <div className="resize-divider" onMouseDown={handleDividerMouseDown} />
       <div className="right-panel">
