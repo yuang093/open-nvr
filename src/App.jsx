@@ -213,13 +213,53 @@ function App() {
     }
   }, []);
 */
+  const [videoWidth, setVideoWidth] = React.useState(
+    parseInt(localStorage.getItem('nvr_videoWidth') || '960')
+  );
+  const isDragging = React.useRef(false);
+  const dragStartX = React.useRef(0);
+  const dragStartWidth = React.useRef(0);
+
+  const handleDividerMouseDown = React.useCallback((e) => {
+    isDragging.current = true;
+    dragStartX.current = e.clientX;
+    dragStartWidth.current = videoWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [videoWidth]);
+
+  React.useEffect(() => {
+    const onMouseMove = (e) => {
+      if (!isDragging.current) return;
+      const delta = e.clientX - dragStartX.current;
+      const newWidth = Math.max(400, Math.min(1600, dragStartWidth.current + delta));
+      setVideoWidth(newWidth);
+      localStorage.setItem('nvr_videoWidth', String(newWidth));
+    };
+    const onMouseUp = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
+
   return (
     <div className="container">
-          <VideoJS onReady={handlePlayerReady} play={currentPlaying} imageUrl={displayImage}/>
-        <div>
-          <CCTVControl playVideo={playVideo} currentPlaying={currentPlaying} showImage={showImage}/>
-        </div>
+      <div className="video-container" style={{ width: videoWidth, flexShrink: 0 }}>
+        <VideoJS onReady={handlePlayerReady} play={currentPlaying} imageUrl={displayImage}/>
       </div>
+      <div className="resize-divider" onMouseDown={handleDividerMouseDown} />
+      <div className="right-panel">
+        <CCTVControl playVideo={playVideo} currentPlaying={currentPlaying} showImage={showImage}/>
+      </div>
+    </div>
   )
   
   
