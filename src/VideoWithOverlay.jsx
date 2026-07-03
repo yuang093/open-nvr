@@ -306,7 +306,7 @@ export const VideoWithOverlay = ({ options, onReady, play, imageUrl }) => {
 
 // Color map for different object classes
 function getBboxColor(object) {
-  const colors: Record<string, string> = {
+  const colors = {
     person: '#00FF00',
     car: '#0088FF',
     truck: '#FF8800',
