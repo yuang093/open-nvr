@@ -67,14 +67,14 @@ export const VideoWithOverlay = ({ options, onReady, play, imageUrl }) => {
       if (result.bboxes && result.bboxes.length > 0) {
         setBboxes(prev => {
           // Only update if meaningfully different
-          const incoming = result.bboxes.map((b: any) => `${b.object}:${b.box.join(',')}`).join('|');
-          const current = prev.map(b => `${b.object}:${b.box.join(',')}`).join('|');
+          const incoming = result.bboxes.map((b) => b.object + ':' + b.box.join(',')).join('|');
+          const current = prev.map((b) => b.object + ':' + b.box.join(',')).join('|');
           return incoming !== current ? result.bboxes : prev;
         });
       } else {
         setBboxes([]);
       }
-    } catch {
+    } catch (e) {
       // Detector not available or error
     }
   }, [captureFrame]);
