@@ -4,6 +4,7 @@ import React, { useEffect, useMemo }  from 'react';
 import Hls from 'hls.js'
 import { PanelSettings } from './PanelSettings.jsx'
 import { PanelStats } from './PanelStats.jsx'
+import { VideoWithOverlay } from './VideoWithOverlay.jsx'
 import { ToolbarGroup, Badge, Text, Button, Portal, Toolbar, Menu, MenuTrigger, Tooltip, SplitButton, MenuPopover, MenuList, MenuItem, ToolbarButton, ToolbarDivider, Spinner, tokens, Dialog, DialogTrigger, DialogSurface, DialogTitle, DialogBody, DialogContent, DialogActions } from "@fluentui/react-components";
 import { ArrowMove20Regular, AccessibilityCheckmark20Regular, AccessTime20Regular, Settings16Regular, ArrowDownload16Regular, DataUsageSettings20Regular, Tv16Regular, Video20Regular, VideoAdd20Regular, ArrowRepeatAll20Regular, Filter20Regular, MoreVertical20Regular, Checkmark12Regular, Dismiss12Regular, Clock12Regular, Clock16Regular, ScanDash12Regular, Play20Filled, CalendarLtr16Regular, Database20Regular } from "@fluentui/react-icons";
 
@@ -159,6 +160,7 @@ function App() {
   //const videoElement = document.getElementById("video");
   
   const playerRef = React.useRef(null);
+  const playerReadyRef = React.useRef(false);
   
   function showImage(imageUrl) {
     setDisplayImage(imageUrl);
@@ -170,7 +172,7 @@ function App() {
     setDisplayImage(null); // Clear image when playing video
     console.log (`App() : playVideo :   cameraKey=${cKey} mKey=${mKey} (${mStartSegment}/${mSeconds}) (prior:${segments_prior_to_movement}/post:${segments_post_movement})`)
     const mPlayer = playerRef.current
-    if (cKey && mPlayer && (!currentPlaying || (currentPlaying.cKey !== cKey || currentPlaying.mKey !== mKey))) {
+    if (cKey && playerReadyRef.current && (!currentPlaying || (currentPlaying.cKey !== cKey || currentPlaying.mKey !== mKey))) {
       setCurrentPlaying({ cKey, mKey, mStartSegment, mSeconds, segments_prior_to_movement, segments_post_movement, segDuration})
       if (mKey) {
         window.location.hash = `play/${cKey}/${mKey}`;
@@ -253,7 +255,7 @@ function App() {
   return (
     <div className="container">
       <div className="video-container" style={{ width: videoWidth, flexShrink: 0 }}>
-        <VideoJS onReady={handlePlayerReady} play={currentPlaying} imageUrl={displayImage}/>
+        <VideoWithOverlay onReady={handlePlayerReady} play={currentPlaying} imageUrl={displayImage}/>
       </div>
       <div className="resize-divider" onMouseDown={handleDividerMouseDown} />
       <div className="right-panel">
