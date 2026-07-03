@@ -218,7 +218,7 @@ export const VideoWithOverlay = ({ options, onReady, play, imageUrl }) => {
     const vidW = video.videoWidth || 640;
     const vidH = video.videoHeight || 480;
 
-    return bboxes.map((bbox: any, i: number) => {
+    return bboxes.map((bbox, i) => {
       if (bbox.probability < MIN_PROBABILITY) return null;
       const [x1, y1, x2, y2] = bbox.box;
       // Scale bbox to current video display size
@@ -305,7 +305,7 @@ export const VideoWithOverlay = ({ options, onReady, play, imageUrl }) => {
 };
 
 // Color map for different object classes
-function getBboxColor(object: string): string {
+function getBboxColor(object) {
   const colors: Record<string, string> = {
     person: '#00FF00',
     car: '#0088FF',
