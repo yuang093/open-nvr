@@ -11,6 +11,7 @@ import fs from 'fs/promises';
 import { createReadStream } from 'fs';
 import { Level } from 'level';
 import type { Server } from 'node:http';
+import http from 'node:http';
 import { runProcess } from './process-utils.js';
 import { sseManager, formatMovementForSSE } from './sse-manager.js';
 import { diskCheck, catalogVideo, DiskCheckReturn } from './diskcheck.js';
@@ -588,10 +589,46 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                 ctx.status = 500;
             }
         })
+        .post('/detect', async (ctx) => {
+            // Proxy detection requests to live-detector service
+            const body = ctx.request.body as { cameraKey?: string; image?: string };
+            if (!body?.cameraKey || !body?.image) {
+                ctx.body = { error: 'cameraKey and image required' };
+                ctx.status = 400;
+                return;
+            }
+            try {
+                const postData = JSON.stringify({ cameraKey: body.cameraKey, image: body.image });
+                const options = {
+                    hostname: '127.0.0.1',
+                    port: 9999,
+                    path: '/detect',
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) }
+                };
+                const result = await new Promise<any>((resolve, reject) => {
+                    const req = http.request(options, (res) => {
+                        let data = '';
+                        res.on('data', chunk => { data += chunk; });
+                        res.on('end', () => {
+                            try { resolve(JSON.parse(data)); } catch { reject(new Error('Invalid response')); }
+                        });
+                    });
+                    req.on('error', reject);
+                    req.write(postData);
+                    req.end();
+                });
+                ctx.body = result;
+            } catch (e) {
+                logger.error('Detect proxy error', { error: String(e) });
+                ctx.body = { error: 'Detection service unavailable', bboxes: [] };
+                ctx.status = 503;
+            }
+        })
         .post('/diskcleanup', async (ctx) => {
             // Force run disk cleanup with optional target capacity
-            const targetCapacity = ctx.request.query['target'] 
-                ? parseInt(ctx.request.query['target'] as string, 10) 
+            const targetCapacity = ctx.request.query['target']
+                ? parseInt(ctx.request.query['target'] as string, 10)
                 : null;
             
             const settingsCache = getSettingsCache();
