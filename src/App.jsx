@@ -171,7 +171,6 @@ function App() {
   function playVideo(cKey, mKey, mStartSegment, mSeconds, segments_prior_to_movement, segments_post_movement, segDuration) {
     setDisplayImage(null); // Clear image when playing video
     console.log (`App() : playVideo :   cameraKey=${cKey} mKey=${mKey} (${mStartSegment}/${mSeconds}) (prior:${segments_prior_to_movement}/post:${segments_post_movement})`)
-    const mPlayer = playerRef.current
     if (cKey && playerReadyRef.current && (!currentPlaying || (currentPlaying.cKey !== cKey || currentPlaying.mKey !== mKey))) {
       setCurrentPlaying({ cKey, mKey, mStartSegment, mSeconds, segments_prior_to_movement, segments_post_movement, segDuration})
       if (mKey) {
@@ -179,13 +178,20 @@ function App() {
       } else {
         window.location.hash = `live/${cKey}`;
       }
+    } else if (cKey && !playerReadyRef.current) {
+      // Player not ready yet, retry after short delay
+      console.warn(`App() : playVideo : player not ready, scheduling retry`)
+      setTimeout(() => {
+        playVideo(cKey, mKey, mStartSegment, mSeconds, segments_prior_to_movement, segments_post_movement, segDuration);
+      }, 200);
     } else {
-      console.warn(`App() : playVideo : player not ready or cannot find camera, or already playing selected camera/movement`)
+      console.warn(`App() : playVideo : player busy or camera unchanged`)
     }
   }
 
   const handlePlayerReady = (video, hls) => {
     playerRef.current = { video, hls };
+    playerReadyRef.current = true;
 
     // you can handle player events here
     video.addEventListener('waiting', () => {

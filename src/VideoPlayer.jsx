@@ -10,7 +10,22 @@ export function VideoPlayer({ onReady, play, imageUrl }) {
   const hlsRef = useRef(null);
   const [isLive, setIsLive] = useState(false);
 
-  // Handle play changes and HLS init combined
+  // Notify ready once video element is actually available
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) {
+      const timer = setTimeout(() => {
+        if (videoRef.current && onReady) {
+          onReady(videoRef.current, null);
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    } else if (onReady) {
+      onReady(video, null);
+    }
+  }, []);
+
+  // Handle play changes and HLS init
   useEffect(() => {
     if (!play) {
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
