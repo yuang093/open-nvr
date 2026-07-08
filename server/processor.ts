@@ -1749,8 +1749,14 @@ function sendImageToMLDetection(imagePath: string, movement_key: number): void {
             _inmem_mlFrameSentTimes.set(imageName, Date.now());
             metrics.mlDetectorFramesInFlight.set(_inmem_mlFrameSentTimes.size);
             // Look up the camera for this movement to resolve its class filter.
-            const movement = _inmem_currentProcessingMovements.get(String(movement_key));
-            const cameraKey = movement?.cameraKey;
+            // _inmem_currentProcessingMovements is keyed by cameraKey, so iterate to find by movement_key.
+            let cameraKey: string | undefined;
+            for (const state of _inmem_currentProcessingMovements.values()) {
+                if (state.movement_key === String(movement_key)) {
+                    cameraKey = state.cameraKey;
+                    break;
+                }
+            }
             const cameraEntry = cameraKey ? deps.getCameraCache()[cameraKey]?.cameraEntry : null;
             const enabledCsv = cameraEntry
                 ? enabledClassesToCsv(resolveEnabledClasses(
