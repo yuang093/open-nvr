@@ -108,11 +108,11 @@ export function VideoPlayer({ onReady, play, imageUrl }) {
     const isLiveStream = !mKey;
     setIsLive(isLiveStream);
 
-    function loadSrc() {
+    function loadSrc(hls) {
       const query = mKey && segments_prior_to_movement ? `?preseq=${segments_prior_to_movement}` : '';
       const src = `/video/${mKey ? `${mStartSegment}/${mSeconds}` : 'live'}/${cKey}/stream.m3u8${query}`;
-      if (hlsRef.current) {
-        hlsRef.current.loadSource(src);
+      if (hls) {
+        hls.loadSource(src);
       } else {
         video.src = src;
         video.load();
@@ -120,28 +120,31 @@ export function VideoPlayer({ onReady, play, imageUrl }) {
       video.play().catch(() => {});
     }
 
+    // Always rebuild HLS instance to ensure clean camera switch
+    // (hls.loadSource() alone does not reliably stop old streams)
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
     if (Hls.isSupported()) {
-      if (!hlsRef.current) {
-        const hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 90 });
-        hlsRef.current = hls;
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-          onReady && onReady(video, hls);
-          loadSrc();
-        });
-        hls.on(Hls.Events.ERROR, (_, data) => {
-          if (data.fatal) {
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
-            else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-            else { hls.destroy(); hlsRef.current = null; }
-          }
-        });
-      } else {
-        loadSrc();
-      }
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 90 });
+      hlsRef.current = hls;
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        onReady && onReady(video, hls);
+        loadSrc(hls);
+      });
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+          else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+          else { hls.destroy(); hlsRef.current = null; }
+        }
+      });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       onReady && onReady(video, null);
-      loadSrc();
+      loadSrc(null);
     }
   }, [play, onReady]);
 
@@ -168,28 +171,50 @@ export function VideoPlayer({ onReady, play, imageUrl }) {
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
         viewBox={`0 0 ${videoWidth} ${videoHeight}`}
       >
-        {bboxes.map((bbox, i) => (
-          <g key={i}>
-            <rect
-              x={bbox.box[0]}
-              y={bbox.box[1]}
-              width={bbox.box[2] - bbox.box[0]}
-              height={bbox.box[3] - bbox.box[1]}
-              fill="none"
-              stroke="#00FF00"
-              strokeWidth={2}
-            />
-            <text
-              x={bbox.box[0]}
-              y={bbox.box[1] - 5}
-              fill="#00FF00"
-              fontSize={14}
-              fontWeight="bold"
-            >
-              {bbox.object} {(bbox.probability * 100).toFixed(0)}%
-            </text>
-          </g>
-        ))}
+        {bboxes.map((bbox, i) => {
+          const color = getColor(bbox.object);
+          const label = `${(bbox.object || '').trim()} ${(bbox.probability * 100).toFixed(0)}%`;
+          // Approximate label width: 16px per char at fontSize 32
+          const labelW = label.length * 16 + 12;
+          const labelH = 38;
+          const labelY = Math.max(bbox.box[1] - labelH - 2, 0);
+          return (
+            <g key={i}>
+              <rect
+                x={bbox.box[0]}
+                y={bbox.box[1]}
+                width={bbox.box[2] - bbox.box[0]}
+                height={bbox.box[3] - bbox.box[1]}
+                fill="none"
+                stroke={color}
+                strokeWidth={4}
+              />
+              <rect
+                x={bbox.box[0]}
+                y={labelY}
+                width={labelW}
+                height={labelH}
+                fill={color}
+                stroke="black"
+                strokeWidth={2}
+                rx={4}
+              />
+              <text
+                x={bbox.box[0] + 6}
+                y={labelY + 28}
+                fill="white"
+                stroke="black"
+                strokeWidth={1}
+                paintOrder="stroke"
+                fontSize={32}
+                fontWeight="bold"
+                fontFamily="sans-serif"
+              >
+                {label}
+              </text>
+            </g>
+          );
+        })}
       </svg>
       {isLive && (
         <div style={{
@@ -202,4 +227,19 @@ export function VideoPlayer({ onReady, play, imageUrl }) {
       <canvas ref={canvasRef} style={{ display: 'none' }} />
     </div>
   );
+}
+
+// Per-object color map for bbox outlines + label backgrounds.
+// Mirrors COCO classes commonly seen on CCTV (person, vehicles, animals).
+// Uses .trim() because some COCO class names have trailing spaces (motorbike, aeroplane, etc.)
+function getColor(obj) {
+  const map = {
+    person: '#00FF00', car: '#0088FF', truck: '#FF8800', bus: '#FF8800',
+    motorbike: '#00CCFF', bicycle: '#00CCFF', aeroplane: '#FF4444',
+    train: '#AA44FF', boat: '#44AAFF', bird: '#FFFF00',
+    cat: '#FF00FF', dog: '#FF00FF', horse: '#AA0000',
+    sheep: '#AAAAAA', cow: '#884400',
+  };
+  const key = (obj || '').trim().toLowerCase();
+  return map[key] || '#FFFF00';
 }

@@ -126,24 +126,73 @@ def post_process(input_data):
     return boxes, classes, scores
 
 
+# BGR color map per COCO class id. Mirrors the frontend getColor() in VideoPlayer.jsx.
+_DRAW_COLORS = {
+    0: (0, 255, 0),       # person -> green
+    1: (255, 204, 0),     # bicycle -> cyan
+    2: (255, 136, 0),     # car -> blue
+    3: (255, 200, 100),   # motorbike -> light blue
+    4: (68, 68, 255),     # aeroplane -> red
+    5: (200, 80, 0),      # bus -> dark blue
+    6: (255, 68, 170),    # train -> purple
+    7: (0, 136, 255),     # truck -> orange
+    8: (230, 180, 40),    # boat -> sky blue
+    14: (0, 255, 255),    # bird -> yellow
+    15: (255, 0, 255),    # cat -> magenta
+    16: (180, 80, 255),   # dog -> pink
+    17: (30, 80, 160),    # horse -> brown
+    18: (170, 170, 170),  # sheep -> grey
+    19: (50, 80, 130),    # cow -> dark brown
+}
+_DRAW_FONT_SCALE = 0.7  # ~16px on 1920x1080 (smaller than live SVG 32px so it doesn't dominate the jpg viewer)
+_DRAW_FONT_THICKNESS = 2
+_DRAW_BOX_THICKNESS = 4
+
+# Draw outlined text (white fill + black outline) for readability on any background.
+def _put_text_outlined(img, text, org, scale, color_fill, color_outline=(0, 0, 0)):
+    # Draw black outline first (4 directions)
+    for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
+        cv2.putText(img, text, (org[0] + dx, org[1] + dy),
+                    cv2.FONT_HERSHEY_SIMPLEX, scale, color_outline,
+                    _DRAW_FONT_THICKNESS + 2, cv2.LINE_AA)
+    # Draw white fill on top
+    cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color_fill,
+                _DRAW_FONT_THICKNESS, cv2.LINE_AA)
+
+
 def draw(image, boxes, scores, classes):
     img_h, img_w = image.shape[:2]
     for box, score, cl in zip(boxes, scores, classes):
         left, top, right, bottom = [int(_b) for _b in box]
-        
+
         # Clip coordinates to image boundaries for drawing (allow slight overflow)
         left = max(0, left)
         top = max(0, top)
         right = min(img_w, right)
         bottom = min(img_h, bottom)
-        
+
         # Skip invalid boxes (empty after clipping)
         if right <= left or bottom <= top:
             continue
-        
-        cv2.rectangle(image, (left, top), (right, bottom), (0, 255, 0), 2)
-        cv2.putText(image, '{0} {1:.2f}'.format(CLASSES[cl], score),
-                    (left, max(top - 6, 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+        color = _DRAW_COLORS.get(int(cl), (0, 255, 255))  # default yellow
+        # Bbox outline with black border + color center for contrast
+        cv2.rectangle(image, (left, top), (right, bottom), (0, 0, 0), _DRAW_BOX_THICKNESS + 2)
+        cv2.rectangle(image, (left, top), (right, bottom), color, _DRAW_BOX_THICKNESS)
+        # Label = class name (strip trailing space) + percentage
+        label = '{0} {1:.0f}%'.format(CLASSES[cl].strip(), score * 100)
+        (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX,
+                                              _DRAW_FONT_SCALE, _DRAW_FONT_THICKNESS)
+        label_y = max(top - 10, th + baseline + 4)
+        # Label background: black border + colored fill
+        bg_x1, bg_y1 = left - 2, label_y - th - baseline - 4
+        bg_x2, bg_y2 = left + tw + 4, label_y + baseline // 2 + 2
+        cv2.rectangle(image, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
+        cv2.rectangle(image, (bg_x1 + 2, bg_y1 + 2), (bg_x2 - 2, bg_y2 - 2), color, -1)
+        # Outlined text (white fill + black outline) for readability
+        _put_text_outlined(image, label, (left, label_y),
+                           _DRAW_FONT_SCALE, (255, 255, 255), (0, 0, 0))
+
 
 def setup_model(args):
     model_path = args.model_path
@@ -186,21 +235,74 @@ def main():
     parser.add_argument('--anno_json', type=str, default='../../../datasets/COCO/annotations/instances_val2017.json', help='coco annotation path')
     parser.add_argument('--coco_map_test', action='store_true', help='enable coco map test')
 
+    # class filter
+    # CSV of COCO class ids to keep. "OTHER" = keep all classes with id >= 9.
+    # Empty / omitted = no filtering (run all 80 classes, current behavior).
+    # Example: "0,1,2,3,4,5,7,8" = drop train, keep "其他" off.
+    parser.add_argument('--enabled-classes', type=str, default='',
+                        help='CSV of COCO class ids to keep. "OTHER" = keep id>=9. Empty = no filter.')
+
     args = parser.parse_args()
 
     # init model
     model, platform = setup_model(args)
 
     co_helper = COCO_test_helper(enable_letter_box=True)
+    print('[detect] letter_box enabled', flush=True)
+
+    # Per-frame class filter. The server may send a JSON object per line:
+    #   {"image": "/abs/path.jpg", "enabledClasses": "0,1,2,3,4,5,7,8,OTHER"}
+    # The legacy wire format (a bare image path on each line) is also accepted
+    # for backward compatibility and means "no filter".
+    def _parse_enabled_classes(csv_text):
+        if not csv_text:
+            return None, False
+        ids = set()
+        keep_others = False
+        for tok in csv_text.split(','):
+            tok = tok.strip()
+            if not tok:
+                continue
+            if tok.upper() == 'OTHER':
+                keep_others = True
+            else:
+                try:
+                    ids.add(int(tok))
+                except ValueError:
+                    print(f'[class-filter] WARN: ignoring non-numeric token {tok!r}', flush=True)
+        if not ids and not keep_others:
+            # All toggles off -> detection will always be empty for this frame.
+            return set(), False
+        return ids, keep_others
+
+    # Default (used when the input line is a bare path with no filter info)
+    enabled_class_set = None
+    enabled_keep_others = False
 
     # run test
     img_counter = 0
     try:
         for line in sys.stdin:
-            img_path = line.strip()
+            line = line.rstrip('\n').rstrip('\r')
+            if not line:
+                continue
+
+            # Parse stdin line. Newer server sends a JSON object with
+            #   { "image": "...", "enabledClasses": "0,1,2,..." }
+            # Older server (and manual testing) sends a bare image path.
+            try:
+                obj = json.loads(line)
+                img_path = obj.get('image') or obj.get('path') or ''
+                csv = obj.get('enabledClasses') or obj.get('enabled_classes') or ''
+                if csv or obj.get('image'):
+                    enabled_class_set, enabled_keep_others = _parse_enabled_classes(csv)
+            except (ValueError, AttributeError):
+                img_path = line.strip()
+                # leave enabled_class_set from the previous frame
+
             if not img_path:
                 continue
-            
+
             img_name = os.path.basename(img_path)
             img_counter += 1
 
@@ -227,12 +329,14 @@ def main():
                 sys.stdout.flush()
                 continue
 
-            # Image should already be 640x640 from ffmpeg letterboxing
-            img_h, img_w = img_src.shape[:2]
-            img = cv2.cvtColor(img_src, cv2.COLOR_BGR2RGB)
+            # Save original image dimensions; letterbox to IMG_SIZE for the model
+            orig_h, orig_w = img_src.shape[:2]
+            img_rgb = cv2.cvtColor(img_src, cv2.COLOR_BGR2RGB)
+            img_lb = co_helper.letter_box(img_rgb, IMG_SIZE, pad_color=(0,0,0))
+            img_h, img_w = img_lb.shape[:2]  # letterboxed shape (used for input_data only)
 
             if platform in ['pytorch', 'onnx']:
-                input_data = img.transpose((2,0,1))
+                input_data = img_lb.transpose((2,0,1))
                 input_data = input_data.reshape(1,*input_data.shape).astype(np.float32)
                 input_data = input_data/255.
             else:
@@ -242,17 +346,36 @@ def main():
 
             boxes, classes, scores = post_process(outputs)
 
+            # Apply class filter if enabled. Drop boxes whose class is not
+            # in the user-selected set. We do this after NMS so we still
+            # benefit from per-class suppression, but before drawing so the
+            # annotated image and the returned detections stay consistent.
+            if enabled_class_set is not None and boxes is not None and len(boxes) > 0:
+                keep_mask = np.array([
+                    (int(c) in enabled_class_set) or (int(c) >= 9 and enabled_keep_others)
+                    for c in classes
+                ])
+                if not keep_mask.all():
+                    dropped = int((~keep_mask).sum())
+                    if dropped:
+                        print(f'[class-filter] dropped {dropped} box(es) outside enabled set', flush=True)
+                    boxes = boxes[keep_mask]
+                    classes = classes[keep_mask]
+                    scores = scores[keep_mask]
+
             # Prepare detection output (even if empty)
             detections = []
-            
+
             # Handle case where objects are detected
+            # Map boxes from letterboxed 640x640 back to original image coordinates
             if boxes is not None and len(boxes) > 0:
-                # Model outputs pixel coordinates in 640x640 space
-                # Clip to image bounds (should already be within bounds)
-                boxes[:, 0] = np.clip(boxes[:, 0], 0, img_w)  # left
-                boxes[:, 1] = np.clip(boxes[:, 1], 0, img_h)  # top
-                boxes[:, 2] = np.clip(boxes[:, 2], 0, img_w)  # right
-                boxes[:, 3] = np.clip(boxes[:, 3], 0, img_h)  # bottom
+                boxes = co_helper.get_real_box(boxes, in_format='xyxy')
+            # Use original dimensions for clipping
+            if boxes is not None and len(boxes) > 0:
+                boxes[:, 0] = np.clip(boxes[:, 0], 0, orig_w)  # left
+                boxes[:, 1] = np.clip(boxes[:, 1], 0, orig_h)  # top
+                boxes[:, 2] = np.clip(boxes[:, 2], 0, orig_w)  # right
+                boxes[:, 3] = np.clip(boxes[:, 3], 0, orig_h)  # bottom
                 
                 # Draw boxes on the original image
                 img_annotated = img_src.copy()

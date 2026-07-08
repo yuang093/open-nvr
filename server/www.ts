@@ -17,6 +17,8 @@ import { sseManager, formatMovementForSSE } from './sse-manager.js';
 import { diskCheck, catalogVideo, DiskCheckReturn } from './diskcheck.js';
 import type { Logger } from 'winston';
 import { registry } from './metrics.js';
+import type { EnabledClasses } from './aiEnabledClasses.js';
+import { defaultEnabledClasses } from './aiEnabledClasses.js';
 
 // Types
 export interface Settings {
@@ -28,6 +30,12 @@ export interface Settings {
     detection_target_hw: string;
     detection_frames_path: string;
     detection_tag_filters: TagFilter[];
+    /**
+     * Global default for which YOLO classes to keep in detection output.
+     * Cameras can override via CameraEntry.enabledClasses.
+     * null/undefined = use built-in default (all classes enabled).
+     */
+    aiEnabledClasses?: EnabledClasses | null;
     /** ML process restart schedule in cron-like format: "HH:MM" (24-hour). Empty = disabled. Default: "01:00" */
     ml_restart_schedule?: string;
     /** Timeout for graceful process shutdown in ms (default: 5000) */
@@ -131,6 +139,13 @@ export interface CameraEntry {
     streamSource?: string;
     enable_streaming: boolean;
     enable_movement: boolean;
+    /** Per-camera AI toggle. If false, motion events recorded but YOLO skipped. Default true. */
+    enable_ai?: boolean;
+    /**
+     * Optional per-camera override for which YOLO classes to detect.
+     * null/undefined = fall back to global Settings.aiEnabledClasses.
+     */
+    enabledClasses?: EnabledClasses | null;
     pollsWithoutMovement: number;
     secMaxSingleMovement: number;
     mSPollFrequency: number;
@@ -482,6 +497,11 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
             logger.info('Settings save', { settings: ctx.request.body });
             if (ctx.request.body) {
                 const new_settings: Settings = ctx.request.body as Settings;
+                // If the client omitted aiEnabledClasses (older UI), default to all enabled
+                // so the API response is always self-describing.
+                if (new_settings.aiEnabledClasses === undefined) {
+                    new_settings.aiEnabledClasses = defaultEnabledClasses();
+                }
                 try {
                     const dirchk = await fs.stat(new_settings.disk_base_dir);
                     if (!dirchk.isDirectory()) throw new Error(`${new_settings.disk_base_dir} is not a directory`);
@@ -521,8 +541,8 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                     }
                 }
 
-                const lastRunAt_en_GB = lastRunAt > 0 
-                    ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'short', timeStyle: 'short', hour12: true }).format(new Date(lastRunAt))
+                const lastRunAt_en_GB = lastRunAt > 0
+                    ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'short', timeStyle: 'short', hour12: false }).format(new Date(lastRunAt))
                     : 'Never';
 
                 const diskStatus: DiskStatus = {
@@ -564,8 +584,8 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                 const cameras: { cameraKey: string, cameraName: string, total: number, oldest: string, newest: string, perDay: { date: string, count: number }[] }[] = [];
                 for (const [cameraKey, stats] of Object.entries(perCamera)) {
                     const cameraName = cameraCache[cameraKey]?.cameraEntry?.name || cameraKey;
-                    const fmt = (ts: number) => ts > 0 
-                        ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'short', timeStyle: 'short', hour12: true }).format(new Date(ts))
+                    const fmt = (ts: number) => ts > 0
+                        ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'short', timeStyle: 'short', hour12: false }).format(new Date(ts))
                         : 'N/A';
                     cameras.push({
                         cameraKey,
@@ -662,16 +682,16 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
 
                 // Save disk status per camera
                 const now = Date.now();
-                const nowFormatted = new Intl.DateTimeFormat('en-GB', { 
-                    dateStyle: 'short', timeStyle: 'short', hour12: true 
+                const nowFormatted = new Intl.DateTimeFormat('en-GB', {
+                    dateStyle: 'short', timeStyle: 'short', hour12: false
                 }).format(new Date(now));
 
                 for (const cameraKey of cameraKeys) {
                     const folder = `${settings.disk_base_dir}/${cameraCache[cameraKey].cameraEntry.folder}`;
                     const folderStats = diskres.folderStats[folder];
                     const cutoffDate = folderStats?.lastRemovedctimeMs || 0;
-                    const cutoffFormatted = cutoffDate > 0 
-                        ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'short', timeStyle: 'short', hour12: true }).format(new Date(cutoffDate))
+                    const cutoffFormatted = cutoffDate > 0
+                        ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'short', timeStyle: 'short', hour12: false }).format(new Date(cutoffDate))
                         : 'N/A';
 
                     await diskstatusdb.put(cameraKey, {
@@ -697,6 +717,51 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                 };
             } catch (e: any) {
                 logger.error('Manual disk cleanup failed', { error: String(e) });
+                ctx.body = { error: String(e) };
+                ctx.status = 500;
+            }
+        })
+        .post('/camera/:id/analyze', async (ctx) => {
+            const cameraKey = ctx.params['id'];
+            try {
+                const cam: CameraEntry = await cameradb.get(cameraKey);
+                if (!cam || cam.delete) {
+                    ctx.body = { error: 'Camera not found' };
+                    ctx.status = 404;
+                    return;
+                }
+                const { spawn } = await import('node:child_process');
+                const pathMod = await import('node:path');
+                const analyzerPath = pathMod.join(process.cwd(), 'ai', 'detector', 'analyze.py');
+                const ipAddr = cam.ip || '';
+                const child = spawn('python3', [analyzerPath, ipAddr, '80', 'admin', cam.passwd || ''], {
+                    cwd: process.cwd(),
+                    timeout: 60000,
+                });
+                let stdout = '';
+                let stderr = '';
+                child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+                child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+                const exitCode: number = await new Promise((resolve) => {
+                    child.on('close', (code) => resolve(code ?? -1));
+                    child.on('error', () => resolve(-1));
+                });
+                if (exitCode !== 0) {
+                    logger.error('Camera analyzer failed', { cameraKey, exitCode, stderr });
+                    ctx.body = { error: 'Analyzer failed', stderr, exitCode };
+                    ctx.status = 502;
+                    return;
+                }
+                try {
+                    const result = JSON.parse(stdout);
+                    ctx.body = result;
+                } catch (parseErr) {
+                    logger.error('Camera analyzer invalid JSON', { cameraKey, stdout: stdout.slice(0, 500), stderr });
+                    ctx.body = { error: 'Invalid analyzer JSON output', stdout, stderr };
+                    ctx.status = 500;
+                }
+            } catch (e) {
+                logger.error('Camera analyze error', { cameraKey, error: String(e) });
                 ctx.body = { error: String(e) };
                 ctx.status = 500;
             }
@@ -777,8 +842,17 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                         if (!deleteOption) {
                             // Preserve state_ fields - don't let client overwrite them
                             const { state_lastProcessedMovementKey: _drop, ...clientData } = new_ce as CameraEntry & { state_lastProcessedMovementKey?: string };
-                            const new_vals: CameraEntry = { 
-                                ...old_cc.cameraEntry, 
+                            // The Edit panel never round-trips the real password.
+                            // It shows a "<set>" sentinel when a password already
+                            // exists, or an empty placeholder. Treat either of
+                            // those as "keep the existing password".
+                            if (clientData.passwd === '<set>' || clientData.passwd === '') {
+                                if (old_cc.cameraEntry.passwd) {
+                                    clientData.passwd = old_cc.cameraEntry.passwd;
+                                }
+                            }
+                            const new_vals: CameraEntry = {
+                                ...old_cc.cameraEntry,
                                 ...clientData,
                                 // Preserve existing state fields
                                 state_lastProcessedMovementKey: old_cc.cameraEntry.state_lastProcessedMovementKey
@@ -883,7 +957,16 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                 .filter(([_, value]) => !value.cameraEntry.delete)
                 .map(([key, value]) => {
                     const { cameraEntry } = value;
-                    const { ip, passwd, ...clientCameraEntry } = cameraEntry;
+                    // Return ip and passwd so the Edit Camera panel can pre-fill
+                    // the IP/Password/StreamSource/MotionUrl fields. For passwd,
+                    // we return a sentinel ('<set>') so the UI knows a password
+                    // exists without exposing it in plaintext. Users re-enter to
+                    // change it; if they submit without changes, the existing
+                    // password is kept (see POST /api/camera/:id).
+                    const clientCameraEntry = {
+                        ...cameraEntry,
+                        passwd: cameraEntry.passwd ? '<set>' : '',
+                    };
                     return { key, ...clientCameraEntry } as CameraEntryClient;
                 });
 
@@ -947,7 +1030,7 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                                     ...(startDate.toDateString() !== (new Date()).toDateString() && { weekday: "short" }),
                                     minute: "2-digit",
                                     hour: "2-digit",
-                                    hour12: true
+                                    hour12: false
                                 }).format(startDate),
                                 movement: {
                                     cameraKey: value.cameraKey,

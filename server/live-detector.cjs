@@ -66,8 +66,17 @@ function initDetector() {
         }
     });
 
-    detectorProc.on('close', () => { detectorProc = null; });
-    console.log('Live detector: python process started');
+    detectorProc.stderr.on('data', (data) => {
+        console.error('DETECT STDERR:', data.toString().trim());
+    });
+    detectorProc.on('error', (err) => {
+        console.error('DETECT ERROR:', err.message);
+    });
+    detectorProc.on('close', (code, signal) => {
+        console.error(`DETECT CLOSED: code=${code} signal=${signal}`);
+        detectorProc = null;
+    });
+    console.log('Live detector: python process started', detectorProc.pid);
 }
 
 function sendToDetector(framePath, frameId) {
@@ -81,7 +90,7 @@ function sendToDetector(framePath, frameId) {
                 pendingCallbacks.delete(frameId);
                 resolve({ bboxes: [], frameId });
             }
-        }, 4000);
+        }, 15000);  // 15s for YOLO inference
     });
 }
 
@@ -94,7 +103,7 @@ async function handleDetect(req, res) {
 
     if (!detectorProc || detectorProc.exitCode !== null) {
         initDetector();
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 5000));  // 5s for YOLO model load
     }
 
     const frameId = Date.now() + '_' + Math.random().toString(36).substring(7);

@@ -360,7 +360,7 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
         key: `hour-${hourKey}`,
         date: hourDate,
         isDayChange: group.isDayChange,
-        label: hourDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+        label: hourDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }),
         dayLabel: hourDate.toLocaleDateString('en-GB', { 
           weekday: 'short',
           day: '2-digit', 
@@ -471,7 +471,7 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
         const isProcessing = item.processing_state === 'processing' || item.processing_state === 'pending';
         const hasDetections = item.detection_output?.tags?.length > 0;
         const itemDate = new Date(item.startDate);
-        const timeStr = itemDate.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+        const timeStr = itemDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
         
         return (
           <div 
@@ -845,11 +845,20 @@ function CCTVControl({currentPlaying, playVideo, showImage}) {
 
                 <MenuItem key="stats" icon={<Database20Regular />} onClick={() => setStatsOpen(true)}>Stats</MenuItem>
 
-                { data.cameras.map(c => 
+                { data.cameras.map(c =>
                   <MenuItem key={c.key} icon={<Video20Regular />}  onClick={() => {
+                    // Pre-fill ALL relevant fields so the Edit panel reflects
+                    // the current state. Missing fields previously caused:
+                    //  - IP/Password/StreamSource/MotionUrl to appear empty
+                    //  - enable_ai checkbox to falsely appear "checked" via
+                    //    `enable_ai !== false` fallback in PanelSettings.jsx
                     setPanel({...panel, open: true, key: 'edit', invalidArray: [],  heading: `Edit Camera Details (${c.key})`, values: {
                       key: c.key,
                       name: c.name,
+                      ip: c.ip || '',
+                      passwd: c.passwd || '',
+                      streamSource: c.streamSource || '',
+                      motionUrl: c.motionUrl || '',
                       folder: c.folder,
                       disk: c.disk,
                       pollsWithoutMovement: c.pollsWithoutMovement,
@@ -857,8 +866,10 @@ function CCTVControl({currentPlaying, playVideo, showImage}) {
                       mSPollFrequency: c.mSPollFrequency,
                       segments_prior_to_movement: c.segments_prior_to_movement,
                       segments_post_movement: c.segments_post_movement,
-                      enable_streaming: c.enable_streaming,
-                      enable_movement: c.enable_movement,
+                      enable_streaming: c.enable_streaming !== false,
+                      enable_movement: c.enable_movement !== false,
+                      enable_ai: c.enable_ai === true,
+                      enabledClasses: c.enabledClasses ?? null,
                     }})
                   }}>{c.name}</MenuItem>
                 )}
@@ -913,11 +924,12 @@ function CCTVControl({currentPlaying, playVideo, showImage}) {
                 const item = infoDialog.item;
                 const startTime = new Date(parseInt(item.key));
                 const endTime = new Date(startTime.getTime() + (item.seconds * 1000));
-                const formatTime = (d) => d.toLocaleString('en-GB', { 
+                const formatTime = (d) => d.toLocaleString('en-GB', {
                   day: '2-digit', month: '2-digit', year: 'numeric',
-                  hour: '2-digit', minute: '2-digit', second: '2-digit'
+                  hour: '2-digit', minute: '2-digit', second: '2-digit',
+                  hour12: false
                 });
-                const formatTimeShort = (ts) => ts ? new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'N/A';
+                const formatTimeShort = (ts) => ts ? new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : 'N/A';
                 const camera = item.camera;
                 
                 // Calculate detection duration

@@ -176,6 +176,18 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
     const [error, setError] = React.useState(null)
     const [diskStatus, setDiskStatus] = React.useState(null)
     const [diskStatusLoading, setDiskStatusLoading] = React.useState(false)
+    const [analyzing, setAnalyzing] = React.useState(false)
+    const [analysisResult, setAnalysisResult] = React.useState(null)
+    const [analysisError, setAnalysisError] = React.useState(null)
+    const [analysisOpen, setAnalysisOpen] = React.useState(false)
+    // Global AI detection class filter. Mirrors Settings.aiEnabledClasses.
+    // Only meaningful for editing on the settings panel (not a specific camera).
+    const [globalClasses, setGlobalClasses] = React.useState(null)  // { individual: [], others: bool } | null
+    const [globalClassesDirty, setGlobalClassesDirty] = React.useState(false)
+    const [globalClassesSaving, setGlobalClassesSaving] = React.useState(false)
+    // Per-camera class filter override. Mirrors CameraEntry.enabledClasses.
+    // null = use global. {individual:[], others:false} = explicit empty.
+    const [cameraClasses, setCameraClasses] = React.useState(null)
 
     const styles = useStyles();
 
@@ -195,6 +207,73 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
                 })
         }
     }, [panel.open, panel.key])
+
+    // Sync global class filter from server data when panel opens / data refreshes
+    React.useEffect(() => {
+        if (panel.open) {
+            const g = data?.config?.settings?.aiEnabledClasses;
+            if (g) setGlobalClasses({ individual: g.individual || [], others: !!g.others });
+        }
+    }, [panel.open, data?.config?.settings?.aiEnabledClasses]);
+
+    // Sync per-camera class filter when a different camera is selected
+    React.useEffect(() => {
+        if (panel.open && panel.key) {
+            // panel.values.enabledClasses holds the per-camera override (null = use global)
+            const c = panel.values?.enabledClasses;
+            if (c) setCameraClasses({ individual: c.individual || [], others: !!c.others });
+            else setCameraClasses(null);
+        }
+    }, [panel.open, panel.key, panel.values?.enabledClasses]);
+
+    const INDIVIDUAL_CLASSES = [
+        { id: 0, label: 'person' },
+        { id: 1, label: 'bicycle' },
+        { id: 2, label: 'car' },
+        { id: 3, label: 'motorcycle' },
+        { id: 4, label: 'airplane' },
+        { id: 5, label: 'bus' },
+        { id: 6, label: 'train' },
+        { id: 7, label: 'truck' },
+        { id: 8, label: 'boat' },
+    ];
+
+    function toggleIndividual(setClasses, current, classId) {
+        const ind = current?.individual || [];
+        const next = ind.includes(classId) ? ind.filter(x => x !== classId) : [...ind, classId];
+        setClasses({ ...(current || { individual: [], others: true }), individual: next });
+    }
+
+    function toggleOthers(setClasses, current) {
+        setClasses({ ...(current || { individual: [], others: true }), others: !current?.others });
+    }
+
+    async function saveGlobalClasses() {
+        if (!globalClasses) return;
+        setGlobalClassesSaving(true);
+        try {
+            const newSettings = { ...data.config.settings, aiEnabledClasses: globalClasses };
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(newSettings),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            setGlobalClassesDirty(false);
+            if (getServerData) await getServerData();
+        } catch (e) {
+            console.error('saveGlobalClasses failed', e);
+            alert('Save failed: ' + e.message);
+        } finally {
+            setGlobalClassesSaving(false);
+        }
+    }
+
+    function saveCameraClasses() {
+        // null means "use global default" — store as null (not an empty object)
+        // so the resolver falls through to Settings.aiEnabledClasses.
+        updatePanelValues('enabledClasses', cameraClasses);
+    }
 
     function updatePanelValues(field, value) {
         console.log (`updatePanelValues ${field} ${JSON.stringify(value)}`)
@@ -258,6 +337,38 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
         }
     }
 
+    async function analyzeCamera() {
+        if (!panel.values.key) return;
+        setAnalyzing(true);
+        setAnalysisError(null);
+        setAnalysisResult(null);
+        setAnalysisOpen(true);
+        try {
+            const res = await fetch(`/api/camera/${panel.values.key}/analyze`, {
+                method: 'POST',
+                credentials: 'same-origin',
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                setAnalysisError(data.error || `HTTP ${res.status}`);
+            } else {
+                setAnalysisResult(data);
+            }
+        } catch (e) {
+            setAnalysisError(String(e));
+        } finally {
+            setAnalyzing(false);
+        }
+    }
+
+    function applyStreamSourceFromAnalysis() {
+        if (!analysisResult || !analysisResult.media_profiles) return;
+        const prof = analysisResult.media_profiles.find(p => p.rtsp_url);
+        if (prof && prof.rtsp_url) {
+            updatePanelValues('streamSource', prof.rtsp_url);
+        }
+    }
+
     function savePanel(event, ctx) {
         const {key} =  ctx && typeof ctx === 'object' ? ctx : {}
 
@@ -291,7 +402,8 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
     }
 
     const currCamera = panel.key === 'edit' && data.cameras && panel.values.key && data.cameras.find(c => c.key === panel.values.key)
-    return panel.open && (
+    return panel.open ? (
+      <>
 
       <Dialog modalType='modal' open={panel.open}>
         <DialogSurface>
@@ -555,10 +667,11 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
                     </Field>
 
                     <Field
-                      label="Camera Password (display on create only)"
+                      label="Camera Password"
+                      hint={panel.values.passwd === '<set>' ? 'A password is set. Re-enter to change, or leave blank to keep the existing one.' : 'Display only on create.'}
                       validationState={getError('passwd') ? "error" : "none"}
                       validationMessage={getError('passwd')}>
-                      <Input style={{"width": "100%"}} contentBefore={<Password16Regular/>}  required type="password" value={panel.values.passwd} onChange={(_, data) => updatePanelValues('passwd', data.value)} />
+                      <Input style={{"width": "100%"}} contentBefore={<Password16Regular/>}  required={panel.values.passwd !== '<set>'} type="password" placeholder={panel.values.passwd === '<set>' ? '(set — leave blank to keep)' : ''} value={panel.values.passwd === '<set>' ? '' : (panel.values.passwd || '')} onChange={(_, data) => updatePanelValues('passwd', data.value)} />
                     </Field>
 
                     <Divider><b>Advanced Stream Settings</b></Divider>
@@ -616,6 +729,108 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
                       <label>Playback seconds post movement: {panel.values.segments_post_movement*2} seconds</label>
                       <Slider style={{"width": "100%"}} disabled={!panel.values.enable_streaming}  min={0} max={60} step={1} defaultValue={panel.values.segments_post_movement}  onChange={(_,data) => updatePanelValues('segments_post_movement', data.value)} />
                     </div>
+
+                    <Divider><b>Global AI Detection Defaults</b></Divider>
+                    <Text size={200} style={{color: '#666'}}>
+                        Which YOLO classes to keep in detection output. Applies to all cameras
+                        that don't have their own override below. Changes take effect on the
+                        next movement.
+                    </Text>
+                    {globalClasses && (
+                      <div style={{display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px 12px', marginTop: '4px'}}>
+                        {INDIVIDUAL_CLASSES.map(c => (
+                          <Checkbox
+                            key={c.id}
+                            label={c.label}
+                            checked={globalClasses.individual.includes(c.id)}
+                            onChange={() => { toggleIndividual(setGlobalClasses, globalClasses, c.id); setGlobalClassesDirty(true); }}
+                          />
+                        ))}
+                        <Checkbox
+                          label={'其他 (animals, electronics, furniture, ...)'}
+                          checked={globalClasses.others}
+                          onChange={() => { toggleOthers(setGlobalClasses, globalClasses); setGlobalClassesDirty(true); }}
+                        />
+                      </div>
+                    )}
+                    <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px'}}>
+                      <Button
+                        appearance="primary"
+                        disabled={!globalClassesDirty || globalClassesSaving}
+                        onClick={saveGlobalClasses}
+                      >
+                        {globalClassesSaving ? 'Saving...' : 'Save Global Defaults'}
+                      </Button>
+                      {globalClassesDirty && <Text size={200} style={{color: '#666'}}>unsaved</Text>}
+                    </div>
+
+                    <Divider><b>AI Analysis</b></Divider>
+
+                    <Checkbox label="Enable AI Analysis (YOLO object detection)" checked={panel.values.enable_ai !== false} onChange={(_,data) => updatePanelValues('enable_ai', data.checked)} />
+
+                    <Field label="Analyze Camera (ONVIF capability discovery)">
+                      <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                        <Button appearance="subtle" disabled={!panel.values.key || analyzing} onClick={analyzeCamera}>
+                          {analyzing ? 'Analyzing...' : 'Analyze Camera'}
+                        </Button>
+                        {analyzing && <Spinner size="tiny" />}
+                        <Text size={200} style={{color: '#666'}}>
+                          Discover ONVIF capabilities, RTSP URLs, motion event support
+                        </Text>
+                      </div>
+                    </Field>
+
+                    <Divider><b>Camera AI Classes</b></Divider>
+                    <Text size={200} style={{color: '#666'}}>
+                        Override the global class filter for this camera. Uncheck "Use Global"
+                        to enable a per-camera list.
+                    </Text>
+                    <Checkbox
+                      label="Use Global Default"
+                      checked={cameraClasses === null}
+                      onChange={(_, data) => {
+                          if (data.checked) {
+                              setCameraClasses(null);
+                          } else {
+                              // Seed with the resolved global so user has a starting point
+                              const g = data?.config?.settings?.aiEnabledClasses
+                                  || globalClasses
+                                  || { individual: [0,1,2,3,4,5,6,7,8], others: true };
+                              setCameraClasses({ individual: g.individual || [], others: !!g.others });
+                          }
+                      }}
+                    />
+                    {cameraClasses !== null && (
+                      <div style={{display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px 12px', marginTop: '4px'}}>
+                        {INDIVIDUAL_CLASSES.map(c => (
+                          <Checkbox
+                            key={c.id}
+                            label={c.label}
+                            checked={cameraClasses.individual.includes(c.id)}
+                            onChange={() => setCameraClasses(prev => {
+                                const ind = prev?.individual || [];
+                                return { ...(prev || { individual: [], others: true }),
+                                         individual: ind.includes(c.id) ? ind.filter(x => x !== c.id) : [...ind, c.id] };
+                            })}
+                          />
+                        ))}
+                        <Checkbox
+                          label={'其他 (animals, electronics, furniture, ...)'}
+                          checked={cameraClasses.others}
+                          onChange={() => setCameraClasses(prev => ({
+                              ...(prev || { individual: [], others: true }),
+                              others: !prev?.others,
+                          }))}
+                        />
+                      </div>
+                    )}
+                    <Button
+                      appearance="subtle"
+                      disabled={!panel.values.key}
+                      onClick={saveCameraClasses}
+                    >
+                      Save Camera Override
+                    </Button>
 
                     <Divider><b>Movement processing</b></Divider>
                     
@@ -694,8 +909,69 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
             </DialogActions>
           </DialogBody>
         </DialogSurface>
-      
-      </Dialog> 
-    )
-    
+
+      </Dialog>
+
+      {analysisOpen ? (
+        <Dialog modalType='modal' open={analysisOpen}>
+          <DialogSurface>
+            <DialogBody>
+              <DialogTitle>Camera Analysis Result</DialogTitle>
+              <DialogContent className={styles.base}>
+                {analyzing && (
+                  <div style={{display: 'flex', alignItems: 'center', gap: '8px', padding: '20px'}}>
+                    <Spinner />
+                    <Text>Querying camera ONVIF capabilities...</Text>
+                  </div>
+                )}
+                {analysisError && (
+                  <Alert intent='error'>{analysisError}</Alert>
+                )}
+                {analysisResult && !analyzing && (
+                  <>
+                    <Field label='Reachable'><Text>{String(analysisResult.reachable)}</Text></Field>
+                    <Field label='ONVIF Supported'><Text>{String(analysisResult.onvif_supported)}</Text></Field>
+                    <Field label='Motion Event Support'><Text>{String(analysisResult.motion_event_support)}</Text></Field>
+                    {analysisResult.device_info && (
+                      <Field label='Device Info'>
+                        <Text>
+                          Mfr: {analysisResult.device_info.manufacturer || '?'}<br/>
+                          Model: {analysisResult.device_info.model || '?'}<br/>
+                          Firmware: {analysisResult.device_info.firmwareVersion || '?'}<br/>
+                          Serial: {analysisResult.device_info.serialNumber || '?'}
+                        </Text>
+                      </Field>
+                    )}
+                    {analysisResult.media_profiles && analysisResult.media_profiles.length > 0 && (
+                      <Field label='Media Profiles (RTSP URLs)'>
+                        {analysisResult.media_profiles.map((p, i) => (
+                          <div key={i} style={{padding: '4px 0'}}>
+                            <Badge appearance='outline'>{p.name || p.token}</Badge>
+                            <Text size={100} style={{wordBreak: 'break-all'}}>{p.rtsp_url || '(no RTSP)'}</Text>
+                          </div>
+                        ))}
+                      </Field>
+                    )}
+                    {analysisResult.errors && analysisResult.errors.length > 0 && (
+                      <Field label='Errors'>
+                        {analysisResult.errors.map((e, i) => <Text key={i} style={{color: 'red'}}>{e}</Text>)}
+                      </Field>
+                    )}
+                  </>
+                )}
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setAnalysisOpen(false)} appearance='subtle'>Close</Button>
+                {analysisResult && analysisResult.media_profiles?.some(p => p.rtsp_url) && (
+                  <Button onClick={() => { applyStreamSourceFromAnalysis(); setAnalysisOpen(false); }} appearance='primary'>
+                    Apply RTSP to Stream Source
+                  </Button>
+                )}
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
+      ) : null}
+      </>
+    ) : null;
 }
