@@ -609,6 +609,31 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                 ctx.status = 500;
             }
         })
+        .get('/cameras/config', async (ctx) => {
+            // Internal endpoint: returns camera streamSource (RTSP URL) for internal tools
+            // like motion_proxy. NOTE: includes credentials, do not expose to internet.
+            try {
+                const configs: { name: string; folder: string; key: string; streamSource: string; enable_streaming: boolean }[] = [];
+                for (const [cameraKey, entry] of Object.entries(cameraCache)) {
+                    const ce = entry.cameraEntry;
+                    if (ce.delete) continue;
+                    const streamSource = ce.streamSource ||
+                        `rtsp://admin:${ce.passwd}@${ce.ip}:554/h264Preview_01_main`;
+                    configs.push({
+                        name: ce.name,
+                        folder: ce.folder,
+                        key: cameraKey,
+                        streamSource,
+                        enable_streaming: ce.enable_streaming !== false
+                    });
+                }
+                ctx.body = { cameras: configs };
+            } catch (e) {
+                logger.error('Error reading camera config', { error: String(e) });
+                ctx.body = { error: String(e) };
+                ctx.status = 500;
+            }
+        })
         .post('/detect', async (ctx) => {
             // Proxy detection requests to live-detector service
             const body = ctx.request.body as { cameraKey?: string; image?: string };
