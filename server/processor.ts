@@ -36,6 +36,7 @@ import type {
     MLTag
 } from './www.js';
 import { encodeMovementKey, MOVEMENT_KEY_EPOCH, ensureDir, getFramesPath } from './www.js';
+import { resolveEnabledClasses, enabledClassesToCsv } from './aiEnabledClasses.js';
 
 // ============================================================================
 // In-Memory State (prefixed with _inmem for clarity per requirements)
@@ -1153,7 +1154,38 @@ export async function triggerProcessMovement(cameraKey: string): Promise<void> {
     
     const cameraEntry = camCacheEntry.cameraEntry;
     if (cameraEntry.delete) return;  // Camera deleted
-    
+
+    // Plan 3: per-camera AI toggle. enable_ai=false -> skip YOLO processing.
+    // Movement is still detected and recorded, but ML detection step is skipped.
+    // We must mark pending movements as completed/ai_disabled so UI doesn't spin forever.
+    if (cameraEntry.enable_ai === false) {
+        deps.logger.debug('triggerProcessMovement: AI disabled for camera, marking pending as ai_disabled', { cameraKey });
+        try {
+            const movementdb = deps.movementdb;
+            const lastProcessedKey = parseInt(cameraEntry.state_lastProcessedMovementKey || '0');
+            for await (const [key, value] of movementdb.iterator({
+                gte: (lastProcessedKey + 1).toString(),
+            })) {
+                if (value.cameraKey !== cameraKey) continue;
+                if (value.processing_state !== 'pending') continue;
+                const updated = {
+                    ...value,
+                    processing_state: 'completed' as const,
+                    detection_status: 'ai_disabled' as const,
+                    detection_ended_at: Date.now(),
+                };
+                await movementdb.put(key, updated);
+                sseManager.broadcastMovementUpdate({
+                    type: 'movement_complete',
+                    movement: { key, ...updated },
+                });
+            }
+        } catch (e) {
+            deps.logger.error('triggerProcessMovement: failed to mark pending as ai_disabled', { cameraKey, error: String(e) });
+        }
+        return;
+    }
+
     // Check if this camera is already processing - handle timeout
     const currentState = _inmem_currentProcessingMovements.get(cameraKey);
     if (currentState) {
@@ -1292,7 +1324,7 @@ export async function triggerProcessMovement(cameraKey: string): Promise<void> {
         '-i', movement.playlist_path!,
         '-an',                              // Disable audio - we only need video frames, prevents audio codec errors
         '-t', `${hardDurationLimit}`,       // Hard OUTPUT duration limit (after -i) to prevent indefinite processing
-        '-vf', 'fps=2,scale=640:640:force_original_aspect_ratio=decrease,pad=640:640:(ow-iw)/2:(oh-ih)/2',
+        '-vf', 'fps=2,scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2',
         '-q:v', '2',                        // High quality JPEG output (1-31, lower is better)
         `${framesPath}/mov${movement_key}_%04d.jpg`
     ];
@@ -1586,8 +1618,8 @@ export async function controllerClearDownDisk(): Promise<void> {
                 metrics.diskCleanupRuns.inc();
 
                 const now = Date.now();
-                const nowFormatted = new Intl.DateTimeFormat('en-GB', { 
-                    dateStyle: 'short', timeStyle: 'short', hour12: true 
+                const nowFormatted = new Intl.DateTimeFormat('en-GB', {
+                    dateStyle: 'short', timeStyle: 'short', hour12: false
                 }).format(new Date(now));
 
                 // Track per-camera stats for disk status
@@ -1642,8 +1674,8 @@ export async function controllerClearDownDisk(): Promise<void> {
                 // Save disk status per camera
                 for (const cameraKey of cameraKeys) {
                     const stats = perCameraStats[cameraKey];
-                    const cutoffFormatted = stats.cutoffDate > 0 
-                        ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'short', timeStyle: 'short', hour12: true }).format(new Date(stats.cutoffDate))
+                    const cutoffFormatted = stats.cutoffDate > 0
+                        ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'short', timeStyle: 'short', hour12: false }).format(new Date(stats.cutoffDate))
                         : 'N/A';
 
                     const diskStatusEntry = {
@@ -1697,6 +1729,11 @@ export async function controllerClearDownDisk(): Promise<void> {
 
 /**
  * Send image path to ML detection process
+ *
+ * Wire format: one JSON object per line on stdin, fields:
+ *   { "image": "/abs/path.jpg", "enabledClasses": "0,1,2,3,4,5,7,8,OTHER" }
+ * The `enabledClasses` field is per-movement (per-camera); when omitted
+ * the detector falls back to its in-process default (no filter).
  */
 function sendImageToMLDetection(imagePath: string, movement_key: number): void {
     // Don't send new frames if restart is pending (waiting for drain or restart)
@@ -1704,14 +1741,25 @@ function sendImageToMLDetection(imagePath: string, movement_key: number): void {
         deps.logger.debug('ML restart pending - frame skipped', { frame: imagePath.split('/').pop() });
         return;
     }
-    
-    if (_inmem_mlDetectionProcess && _inmem_mlDetectionProcess.stdin && 
+
+    if (_inmem_mlDetectionProcess && _inmem_mlDetectionProcess.stdin &&
         !_inmem_mlDetectionProcess.killed && _inmem_mlDetectionProcess.stdin.writable) {
         try {
             const imageName = imagePath.split('/').pop() || imagePath;
             _inmem_mlFrameSentTimes.set(imageName, Date.now());
             metrics.mlDetectorFramesInFlight.set(_inmem_mlFrameSentTimes.size);
-            _inmem_mlDetectionProcess.stdin.write(`${imagePath}\n`);
+            // Look up the camera for this movement to resolve its class filter.
+            const movement = _inmem_currentProcessingMovements.get(String(movement_key));
+            const cameraKey = movement?.cameraKey;
+            const cameraEntry = cameraKey ? deps.getCameraCache()[cameraKey]?.cameraEntry : null;
+            const enabledCsv = cameraEntry
+                ? enabledClassesToCsv(resolveEnabledClasses(
+                      cameraEntry,
+                      deps.getSettingsCache().settings.aiEnabledClasses ?? null,
+                  ))
+                : '';
+            const payload = JSON.stringify({ image: imagePath, enabledClasses: enabledCsv });
+            _inmem_mlDetectionProcess.stdin.write(payload + '\n');
             
             // Track frames sent for the current processing movement
             for (const state of _inmem_currentProcessingMovements.values()) {

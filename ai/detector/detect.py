@@ -426,7 +426,7 @@ def main():
         print("\nEnd of input reached.")
     finally:
         model.release()
-        cv2.destroyAllWindows()
+        # cv2.destroyAllWindows()  # Disabled for headless (libgtk2 not installed)
 
 if __name__ == '__main__':
     main()
