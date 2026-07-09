@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -101,26 +102,26 @@ def write_event(camera_key: str, camera_name: str, event: str, track_id: str):
         if result.returncode == 0:
             print(f"[static_detector] event written: {event} {track_id}", flush=True)
         else:
-            print(f"[static_detector] event write failed: {result.stderr.strip()}", flush=True)
+            print(f"[static_detector] event write failed: {(result.stderr or '').strip()}", flush=True)
     except subprocess.TimeoutExpired:
         print(f"[static_detector] event write timeout", flush=True)
 
 
 def run_cycle(args, tracker: Tracker):
     """One check cycle: grab -> detect -> tracker -> events."""
-    out_path = Path("/tmp") / f"static_frame_{int(time.time())}.jpg"
+    fd, fname = tempfile.mkstemp(suffix=".jpg", dir="/tmp", prefix="static_frame_")
+    os.close(fd)  # release the fd; ffmpeg will write the file
+    out_path = Path(fname)
     if not grab_frame(args.rtsp, out_path):
         STATE["error"] = "ffmpeg grab failed"
+        out_path.unlink(missing_ok=True)
         return
     STATE["error"] = None
 
     try:
         dets = detect_airplanes(out_path, args.camera_key)
     finally:
-        try:
-            out_path.unlink()
-        except FileNotFoundError:
-            pass
+        out_path.unlink(missing_ok=True)
 
     STATE["last_check"] = time.time()
     STATE["last_airplane_count"] = len(dets)
@@ -129,10 +130,7 @@ def run_cycle(args, tracker: Tracker):
     for ev in events:
         write_event(args.camera_key, args.camera, ev["event"], ev["track_id"])
 
-    STATE["tracks"] = [
-        {"track_id": tid, "misses": s.get("misses", 0), "pending": s.get("pending", 0)}
-        for tid, s in tracker._state.items()
-    ]
+    STATE["tracks"] = tracker.snapshot()
 
 
 def make_status_handler():

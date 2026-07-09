@@ -134,6 +134,13 @@ class Tracker:
 
         return events
 
+    def snapshot(self) -> list[dict]:
+        """Return a public-safe view of current track state for status/debug."""
+        return [
+            {"track_id": tid, "misses": s.get("misses", 0), "pending": s.get("pending", 0)}
+            for tid, s in self._state.items()
+        ]
+
     def _maybe_fire_arrived(self, tid: str, state: dict) -> dict | None:
         if state.get("arrived_fired"):
             return None
