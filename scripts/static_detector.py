@@ -18,7 +18,8 @@ import sys
 import tempfile
 import time
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 # Make scripts package importable
@@ -133,14 +134,16 @@ def run_cycle(args, tracker: Tracker):
     STATE["tracks"] = tracker.snapshot()
 
 
-def make_status_handler():
+def make_status_handler(state_lock):
     class H(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/status":
+                with state_lock:
+                    snapshot = json.dumps(STATE, indent=2).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps(STATE, indent=2).encode())
+                self.wfile.write(snapshot)
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -162,22 +165,35 @@ def main():
     p.add_argument("--confirmation-frames", type=int, default=2)
     args = p.parse_args()
 
+    # Mutex protecting STATE dict and tracker._state reads/writes from HTTP handler
+    state_lock = threading.Lock()
     tracker = Tracker(confirmation_frames=args.confirmation_frames)
 
     print(f"[static_detector] starting: camera={args.camera} interval={args.interval}s port={args.port}", flush=True)
 
-    server = HTTPServer(("127.0.0.1", args.port), make_status_handler())
-    print(f"[static_detector] status endpoint: http://127.0.0.1:{args.port}/status", flush=True)
+    def cycle_loop():
+        """Background thread: runs run_cycle on schedule."""
+        while True:
+            try:
+                with state_lock:
+                    run_cycle(args, tracker)
+            except Exception as e:
+                print(f"[static_detector] cycle error: {e}", flush=True)
+                with state_lock:
+                    STATE["error"] = str(e)
+            time.sleep(args.interval)
 
-    while True:
-        try:
-            run_cycle(args, tracker)
-        except Exception as e:
-            print(f"[static_detector] cycle error: {e}", flush=True)
-            STATE["error"] = str(e)
-        server.timeout = max(0.1, args.interval / 10)
-        server.handle_request()
-        time.sleep(args.interval)
+    cycle_thread = threading.Thread(target=cycle_loop, name="cycle", daemon=True)
+    cycle_thread.start()
+
+    # Main thread: serve HTTP on the requested port.
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_status_handler(state_lock))
+    print(f"[static_detector] status endpoint: http://127.0.0.1:{args.port}/status", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("[static_detector] shutting down", flush=True)
+        server.shutdown()
 
 
 if __name__ == "__main__":
