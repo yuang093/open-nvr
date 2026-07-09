@@ -29,7 +29,7 @@ sys.path.insert(0, str(SCRIPTS_DIR.parent))
 from scripts.iou_tracker import Tracker  # noqa: E402
 
 YOLO_URL = "http://127.0.0.1:9999/detect"
-NVR_URL = os.environ.get("NVR_EVENT_URL", "http://127.0.0.1:8080/static-event")
+NVR_URL = os.environ.get("NVR_EVENT_URL", "http://127.0.0.1:8080/api/static-event")
 EVENT_WRITER = SCRIPTS_DIR / "static_event_writer.cjs"  # legacy fallback (LOCKED in DB-share)
 NODE_BIN = "/usr/bin/node"
 
