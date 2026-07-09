@@ -16,10 +16,24 @@ const { Level } = require('level');
 
 const DBPATH = process.env.NVR_DBPATH || path.join(__dirname, '..', 'mydb');
 
+const VALID_EVENTS = ['arrived', 'departed'];
+
 async function main() {
-    const args = parseArgs(process.argv.slice(2));
-    if (!args.cameraKey || !args.event || !args.trackId) {
+    let args;
+    try {
+        args = parseArgs(process.argv.slice(2));
+    } catch (e) {
+        console.error('Error:', e.message);
         console.error('Usage: node static_event_writer.cjs --cameraKey <key> --cameraName <name> --event <arrived|departed> --trackId <id>');
+        process.exit(2);
+    }
+    if (!args.cameraKey || !args.event || !args.trackId) {
+        console.error('Missing required: --cameraKey, --event, --trackId');
+        console.error('Usage: node static_event_writer.cjs --cameraKey <key> --cameraName <name> --event <arrived|departed> --trackId <id>');
+        process.exit(2);
+    }
+    if (!VALID_EVENTS.includes(args.event)) {
+        console.error(`Invalid --event: ${args.event}. Must be one of: ${VALID_EVENTS.join(', ')}`);
         process.exit(2);
     }
 
@@ -68,6 +82,9 @@ function parseArgs(argv) {
         if (argv[i].startsWith('--')) {
             const key = argv[i].slice(2);
             const val = argv[i + 1];
+            if (val === undefined || val.startsWith('--')) {
+                throw new Error(`flag --${key} requires a value`);
+            }
             out[key] = val;
             i++;
         }
