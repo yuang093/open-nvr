@@ -79,11 +79,19 @@ function initDetector() {
     console.log('Live detector: python process started', detectorProc.pid);
 }
 
-function sendToDetector(framePath, frameId) {
+function sendToDetector(framePath, frameId, enabledClasses) {
     return new Promise((resolve) => {
         pendingCallbacks.set(frameId, resolve);
         if (detectorProc && detectorProc.stdin) {
-            detectorProc.stdin.write(framePath + '\n');
+            // Wire format matches server/processor.ts:1473 so detect.py can
+            // class-filter live frames the same way it filters motion frames.
+            // enabledClasses is a CSV string ("0,1,2,3,4,5,OTHER") or "" for
+            // "no filter / use defaults".
+            const payload = { image: framePath };
+            if (typeof enabledClasses === 'string' && enabledClasses.length > 0) {
+                payload.enabledClasses = enabledClasses;
+            }
+            detectorProc.stdin.write(JSON.stringify(payload) + '\n');
         }
         setTimeout(() => {
             if (pendingCallbacks.has(frameId)) {
@@ -113,7 +121,7 @@ async function handleDetect(req, res) {
         const imageData = req.image.replace(/^data:image\/\w+;base64,/, '');
         const imageBuffer = Buffer.from(imageData, 'base64');
         fs.writeFileSync(framePath, imageBuffer);
-        const result = await sendToDetector(framePath, frameId);
+        const result = await sendToDetector(framePath, frameId, req.enabledClasses);
         result.cameraKey = req.cameraKey;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));

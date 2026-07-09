@@ -18,7 +18,7 @@ import { diskCheck, catalogVideo, DiskCheckReturn } from './diskcheck.js';
 import type { Logger } from 'winston';
 import { registry } from './metrics.js';
 import type { EnabledClasses } from './aiEnabledClasses.js';
-import { defaultEnabledClasses } from './aiEnabledClasses.js';
+import { defaultEnabledClasses, resolveEnabledClasses, enabledClassesToCsv } from './aiEnabledClasses.js';
 
 // Types
 export interface Settings {
@@ -643,7 +643,20 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                 return;
             }
             try {
-                const postData = JSON.stringify({ cameraKey: body.cameraKey, image: body.image });
+                // Resolve per-camera + global class filter so live bbox
+                // overlay honors the user's enabled-classes setting.
+                const ce = cameraCache[body.cameraKey]?.cameraEntry;
+                const enabledCsv = ce
+                    ? enabledClassesToCsv(resolveEnabledClasses(
+                          ce,
+                          getSettingsCache().settings.aiEnabledClasses ?? null,
+                      ))
+                    : '';
+                const postData = JSON.stringify({
+                    cameraKey: body.cameraKey,
+                    image: body.image,
+                    enabledClasses: enabledCsv,
+                });
                 const options = {
                     hostname: '127.0.0.1',
                     port: 9999,
