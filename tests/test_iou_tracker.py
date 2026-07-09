@@ -17,7 +17,7 @@ def test_box_iou_partial():
 
 
 def test_match_empty_prev():
-    """No previous tracks → all current are unmatched (new arrivals)."""
+    """No previous tracks -> all current are unmatched (new arrivals)."""
     pairs, unmatched_prev, unmatched_curr = greedy_iou_match([], [
         {"id": "a", "box": [0, 0, 10, 10]}
     ], iou_thresh=0.3)
@@ -27,7 +27,7 @@ def test_match_empty_prev():
 
 
 def test_match_empty_curr():
-    """No current → all prev are unmatched (departures)."""
+    """No current -> all prev are unmatched (departures)."""
     pairs, unmatched_prev, unmatched_curr = greedy_iou_match([
         {"id": "a", "box": [0, 0, 10, 10]}
     ], [], iou_thresh=0.3)
@@ -41,7 +41,7 @@ def test_match_one_to_one():
     pairs, up, uc = greedy_iou_match([
         {"id": "a", "box": [0, 0, 100, 100]}
     ], [
-        {"id": "b", "box": [5, 5, 105, 105]}  # IOU ~ 0.90
+        {"id": "b", "box": [5, 5, 105, 105]}
     ], iou_thresh=0.3)
     assert len(pairs) == 1
     assert pairs[0] == ("a", "b")
@@ -64,10 +64,8 @@ def test_match_below_threshold():
 def test_tracker_2frame_confirmation_arrival():
     """Track needs 2 consecutive frames before becoming 'confirmed'."""
     t = Tracker(confirmation_frames=2)
-    # First frame: new detection
     arrived = t.update([{"id": "x1", "box": [0, 0, 100, 100]}])
-    assert arrived == []  # not yet confirmed
-    # Second frame: same id again
+    assert arrived == []
     arrived = t.update([{"id": "x1", "box": [0, 0, 100, 100]}])
     assert arrived == [{"class": "aeroplane", "track_id": "x1", "event": "arrived"}]
 
@@ -75,14 +73,33 @@ def test_tracker_2frame_confirmation_arrival():
 def test_tracker_2frame_confirmation_departure():
     """Track needs 2 consecutive misses before 'departed'."""
     t = Tracker(confirmation_frames=2)
-    # Plant a confirmed track
     t.update([{"id": "a", "box": [0, 0, 100, 100]}])
-    t.update([{"id": "a", "box": [0, 0, 100, 100]}])  # now confirmed
-    # First miss
+    t.update([{"id": "a", "box": [0, 0, 100, 100]}])
     departed = t.update([])
     assert departed == []
-    # Second miss
     departed = t.update([])
     assert len(departed) == 1
     assert departed[0]["event"] == "departed"
     assert departed[0]["track_id"] == "a"
+
+
+def test_unconfirmed_track_removed_on_miss():
+    """Transient false positive: track seen once and not confirmed is
+    dropped after a single miss without firing any event."""
+    t = Tracker(confirmation_frames=2)
+    events = t.update([{"id": "transient", "box": [0, 0, 50, 50]}])
+    assert events == []
+    events = t.update([])
+    assert events == []
+
+
+def test_unconfirmed_track_does_not_affect_subsequent_arrival():
+    """A transient miss-then-recover should not count toward confirmation."""
+    t = Tracker(confirmation_frames=2)
+    t.update([{"id": "x", "box": [0, 0, 50, 50]}])
+    t.update([])
+    events = t.update([{"id": "x", "box": [0, 0, 50, 50]}])
+    assert events == []
+    events = t.update([{"id": "x", "box": [0, 0, 50, 50]}])
+    assert len(events) == 1
+    assert events[0]["event"] == "arrived"

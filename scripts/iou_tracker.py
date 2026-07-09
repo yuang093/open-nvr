@@ -88,6 +88,11 @@ class Tracker:
 
     Each track needs to be detected N consecutive frames to be confirmed as 'arrived'.
     Each confirmed track needs to be missing N consecutive frames to fire 'departed'.
+
+    Tracks that are never confirmed (transient false positives) are removed after
+    a single miss without firing any event. This keeps state clean and avoids
+    re-promoting the same id later -- re-detecting an old id starts a fresh
+    confirmation cycle from pending=1.
     """
 
     def __init__(self, confirmation_frames: int = 2):
