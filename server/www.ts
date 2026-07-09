@@ -81,6 +81,8 @@ export interface MovementEntry {
     frames_received_from_ml?: number; // Number of ML results received
     ml_total_processing_time_ms?: number; // Sum of all ML processing times
     ml_max_processing_time_ms?: number;   // Max single frame processing time
+    /** Free-form debug note (e.g. "static_detection: airplane_arrived trackId=a0"). */
+    notes?: string;
 }
 
 export interface MLTag {
