@@ -29,7 +29,8 @@ sys.path.insert(0, str(SCRIPTS_DIR.parent))
 from scripts.iou_tracker import Tracker  # noqa: E402
 
 YOLO_URL = "http://127.0.0.1:9999/detect"
-EVENT_WRITER = SCRIPTS_DIR / "static_event_writer.cjs"
+NVR_URL = os.environ.get("NVR_EVENT_URL", "http://127.0.0.1:8080/static-event")
+EVENT_WRITER = SCRIPTS_DIR / "static_event_writer.cjs"  # legacy fallback (LOCKED in DB-share)
 NODE_BIN = "/usr/bin/node"
 
 # Global state for /status endpoint
@@ -90,22 +91,30 @@ def detect_airplanes(image_path: Path, camera_key: str) -> list[dict]:
 
 
 def write_event(camera_key: str, camera_name: str, event: str, track_id: str):
-    """Invoke Node.js writer to persist event to levelDB."""
-    cmd = [
-        NODE_BIN, str(EVENT_WRITER),
-        "--cameraKey", camera_key,
-        "--cameraName", camera_name,
-        "--event", event,
-        "--trackId", track_id,
-    ]
+    """POST event to NVR server's /static-event endpoint.
+
+    We cannot write to mydb directly because leveldb LOCK is held by the
+    NVR server process. POSTing to NVR lets it reuse its own open handle.
+    """
+    payload = {
+        "cameraKey": camera_key,
+        "cameraName": camera_name,
+        "event": event,
+        "trackId": track_id,
+        "source": "static_detector",
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        NVR_URL,
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
     try:
-        result = subprocess.run(cmd, timeout=10, capture_output=True, text=True)
-        if result.returncode == 0:
-            print(f"[static_detector] event written: {event} {track_id}", flush=True)
-        else:
-            print(f"[static_detector] event write failed: {(result.stderr or '').strip()}", flush=True)
-    except subprocess.TimeoutExpired:
-        print(f"[static_detector] event write timeout", flush=True)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            print(f"[static_detector] event written: {event} {track_id} -> {body}", flush=True)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
+        print(f"[static_detector] event write failed: {e}", flush=True)
 
 
 def run_cycle(args, tracker: Tracker):

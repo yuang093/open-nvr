@@ -38,6 +38,9 @@ async function main() {
     }
 
     const db = new Level(DBPATH, { valueEncoding: 'json' });
+    // level@10 requires explicit open() before any operation.
+    // Without this, every put/get throws DatabaseIsNotOpenError.
+    await db.open();
     const movements = db.sublevel('movements', { valueEncoding: 'json' });
 
     const movementKey = String(Date.now());

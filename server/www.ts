@@ -759,6 +759,74 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                 ctx.status = 500;
             }
         })
+        .post('/static-event', async (ctx) => {
+            // Receive a static detection event (e.g., airplane arrived/departed at tarmac)
+            // from an external Python service. We persist it as a movement so /api/movements
+            // and the UI timeline pick it up automatically.
+            //
+            // Why IPC: the external service cannot open mydb itself because leveldb LOCK
+            // is held by this NVR server process. POSTing here reuses our open handle.
+            const body = ctx.request.body as {
+                cameraKey?: string;
+                cameraName?: string;
+                event?: string;       // 'arrived' | 'departed'
+                trackId?: string;
+                source?: string;       // optional origin tag
+            };
+            const cameraKey = body?.cameraKey;
+            const cameraName = body?.cameraName || cameraKey;
+            const eventName = body?.event;
+            const trackId = body?.trackId;
+            if (!cameraKey || !eventName || !trackId) {
+                ctx.status = 400;
+                ctx.body = { error: 'cameraKey, event, trackId are required' };
+                return;
+            }
+            if (eventName !== 'arrived' && eventName !== 'departed') {
+                ctx.status = 400;
+                ctx.body = { error: `invalid event: ${eventName} (must be arrived|departed)` };
+                return;
+            }
+            const now = Date.now();
+            const movementKey = encodeMovementKey(now);
+            const movement: MovementEntry = {
+                cameraKey,
+                startDate: now,
+                startSegment: null,
+                seconds: 1,
+                pollCount: 1,
+                consecutivePollsWithoutMovement: 0,
+                processing_state: 'completed',
+                detection_status: 'static_event',
+                detection_started_at: now,
+                detection_ended_at: now,
+                processing_completed_at: now,
+                created: now,
+                updated: now,
+                movement_key: movementKey,
+                camera_key: cameraKey,
+                start: now,
+                stop: now,
+                detection_output: {
+                    tags: [{
+                        tag: 'aeroplane',
+                        maxProbability: 0,
+                        count: 1,
+                    }],
+                },
+                notes: `static_detection: airplane_${eventName} (${body?.source || 'static_detector'} trackId=${trackId})`,
+            };
+            try {
+                await movementdb.put(movementKey, movement);
+                logger.info('Static event recorded', { cameraKey, event: eventName, trackId, movementKey });
+                ctx.status = 201;
+                ctx.body = { ok: true, movementKey, event: eventName, trackId };
+            } catch (e: any) {
+                logger.error('Static event write failed', { error: String(e) });
+                ctx.status = 500;
+                ctx.body = { error: String(e) };
+            }
+        })
         .post('/camera/:id/analyze', async (ctx) => {
             const cameraKey = ctx.params['id'];
             try {
