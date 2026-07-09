@@ -1,0 +1,19 @@
+# systemd/static-detector.service
+[Unit]
+Description=Static airplane detection (c3 停機坪)
+After=network-online.target live-detector.service nvr-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+WorkingDirectory=/home/ya-001/open-source-nvr
+Environment=HOME=/home/ya-001
+Environment=PYTHONPATH=/home/ya-001/.local/lib/python3.12/site-packages
+ExecStart=/usr/bin/python3 -u /home/ya-001/open-source-nvr/scripts/static_detector.py
+StandardOutput=append:/var/log/static_detector.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target
