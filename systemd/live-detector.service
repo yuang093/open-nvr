@@ -1,0 +1,24 @@
+# systemd/live-detector.service
+[Unit]
+Description=NVR Live YOLO Detector (REST bridge on 9999)
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=3
+WorkingDirectory=/home/ya-001/open-source-nvr
+Environment=HOME=/home/ya-001
+Environment=PYTHONPATH=/home/ya-001/.local/lib/python3.12/site-packages
+# Kill any leftover ML-Detection subprocess from a previous instance before
+# spawning a fresh one. Without this, restarting live-detector leaves the
+# old `python3 -m detector.detect` running until live-detector itself
+# happens to respawn it. Same rationale as nvr-server.service.
+ExecStartPre=-/usr/bin/pkill -9 -f "detector.detect" || true
+ExecStart=/usr/bin/node server/live-detector.cjs
+StandardOutput=append:/tmp/live-detector.log
+StandardError=append:/tmp/live-detector.log
+
+[Install]
+WantedBy=multi-user.target

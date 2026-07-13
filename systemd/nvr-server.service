@@ -1,0 +1,23 @@
+# systemd/nvr-server.service
+[Unit]
+Description=NVR server (open-source-nvr)
+After=network-online.target cctv-routes.service live-detector.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+WorkingDirectory=/home/ya-001/open-source-nvr
+Environment=HOME=/home/ya-001
+Environment=PYTHONPATH=/home/ya-001/.local/lib/python3.12/site-packages
+# Kill any leftover ML-Detection subprocess from a previous (crashed or
+# manually-killed) instance before spawning a fresh one. Without this,
+# `systemctl restart nvr-server` leaves the old `python3 -m detector.detect`
+# around, doubling RAM use and confusing code-reload diagnostics. The `-`
+# prefix makes the ExecStartPre tolerate the "no match" error code.
+ExecStartPre=-/usr/bin/pkill -9 -f "detector.detect" || true
+ExecStart=/usr/bin/node lib/server/index.js
+
+[Install]
+WantedBy=multi-user.target
