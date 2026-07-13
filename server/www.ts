@@ -73,6 +73,12 @@ export interface MovementEntry {
     updated?: number;
     movement_key?: string;
     camera_key?: string;
+    // Plan 8 (2026-07-13): dedicated fields for static_event records.
+    // Values for `event`: 'arrived' | 'departed'. Both fields are nullable
+    // for regular movement records; the /api/movements serializer only
+    // surfaces them when present.
+    event?: 'arrived' | 'departed';
+    track_id?: string;
     // Detection timing (camera movement detection)
     detection_started_at?: number;  // When movement was first detected
     detection_ended_at?: number;    // When movement ended (ENDLIST written)
@@ -1219,7 +1225,9 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                                     // distinguish airplane_arrival vs airplane_departure. Before
                                     // this fix the field existed in DB but was silently dropped
                                     // by the response serializer.
-                                    ...(value.notes && { notes: value.notes })
+                                    ...(value.notes && { notes: value.notes }),
+                                    ...(value.event && { event: value.event }),
+                                    ...(value.track_id && { track_id: value.track_id })
                                 }
                             });
                         }

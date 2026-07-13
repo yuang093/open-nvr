@@ -95,7 +95,8 @@ function initDetector() {
     detectorProc.stderr?.on('data', (_data: Buffer) => {
         // Log detector errors silently (intentionally ignored for now — see fix
         // in this repo's history for live-detector noise).
-        void _data;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        if (_data.length > 0) { /* swallow stderr chunks */ }
     });
 
     detectorProc.on('close', () => {
