@@ -5,7 +5,7 @@ import Hls from 'hls.js'
 import { PanelSettings } from './PanelSettings.jsx'
 import { PanelStats } from './PanelStats.jsx'
 import { VideoPlayer } from './VideoPlayer.jsx'
-import { ToolbarGroup, Badge, Text, Button, Portal, Toolbar, Menu, MenuTrigger, Tooltip, SplitButton, MenuPopover, MenuList, MenuItem, ToolbarButton, ToolbarDivider, Spinner, tokens, Dialog, DialogTrigger, DialogSurface, DialogTitle, DialogBody, DialogContent, DialogActions } from "@fluentui/react-components";
+import { ToolbarGroup, Badge, Text, Button, Portal, Toolbar, Menu, MenuTrigger, Tooltip, SplitButton, MenuPopover, MenuList, MenuItem, ToolbarButton, ToolbarDivider, Spinner, tokens, Dialog, DialogTrigger, DialogSurface, DialogTitle, DialogBody, DialogContent, DialogActions, Switch } from "@fluentui/react-components";
 import { ArrowMove20Regular, AccessibilityCheckmark20Regular, AccessTime20Regular, Settings16Regular, ArrowDownload16Regular, DataUsageSettings20Regular, Tv16Regular, Video20Regular, VideoAdd20Regular, ArrowRepeatAll20Regular, Filter20Regular, MoreVertical20Regular, Checkmark12Regular, Dismiss12Regular, Clock12Regular, Clock16Regular, ScanDash12Regular, Play20Filled, CalendarLtr16Regular, Database20Regular } from "@fluentui/react-icons";
 
 
@@ -406,20 +406,43 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
   };
 
   const renderBadges = (item) => {
+    // Plan 8: prepend a static_event badge when the static_detector wrote this
+    // record (aircraft arrival/departure at apron cameras). The detail dialog
+    // already shows the full notes field, so we just label it here.
+    const isStaticEvent = item.detection_status === 'static_event';
+    const notes = (typeof item.notes === 'string') ? item.notes : '';
+    const staticLabel = isStaticEvent
+      ? (notes.includes('airplane_arrival') ? '✈️ Static: arrival'
+        : notes.includes('airplane_departure') ? '✈️ Static: departure'
+        : '✈️ Static')
+      : null;
+    const staticBadge = staticLabel ? (
+      <Badge
+        key="static-event"
+        appearance="filled"
+        color={notes.includes('airplane_arrival') ? 'success' : 'warning'}
+        style={{ fontSize: '10px', padding: '2px 5px' }}
+        title={notes || 'Static event'}
+      >
+        {staticLabel}
+      </Badge>
+    ) : null;
+
     const tags = item.detection_output?.tags;
-    
+
     if (!tags || tags.length === 0) {
+      if (staticBadge) return staticBadge;
       // Show processing state when no tags yet
       if (item.processing_state === 'processing' || item.processing_state === 'pending') {
         return <Spinner size="extra-tiny" />;
       }
       return <Badge appearance="tint" color="subtle" style={{ fontSize: '10px' }}>No detections</Badge>;
     }
-    
+
     // Sort and display tags
     const sortedTags = [...tags].sort((a, b) => b.maxProbability - a.maxProbability);
-    
-    return sortedTags.slice(0, 5).map((tag, idx) => (
+
+    const tagBadges = sortedTags.slice(0, 5).map((tag, idx) => (
       <Badge
         key={idx}
         appearance="filled"
@@ -434,6 +457,8 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
         {tag.tag} {(tag.maxProbability * 100).toFixed(0)}%
       </Badge>
     ));
+
+    return staticBadge ? [staticBadge, ...tagBadges] : tagBadges;
   };
 
   if (timelineData.length === 0) {
@@ -476,7 +501,7 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
         return (
           <div 
             key={item.key}
-            className={`timeline-item ${isSelected ? 'selected' : ''} ${isProcessing ? 'processing' : ''} ${!hasDetections ? 'no-detection' : ''} ${highlightedKeys.has(item.key) ? 'highlighted-row' : ''}`}
+            className={`timeline-item ${isSelected ? 'selected' : ''} ${isProcessing ? 'processing' : ''} ${!hasDetections ? 'no-detection' : ''} ${highlightedKeys.has(item.key) ? 'highlighted-row' : ''} ${item.detection_status === 'static_event' ? 'static-event' : ''}`}
           >
             <Menu positioning="below-start">
               <MenuTrigger disableButtonEnhancement>
@@ -538,6 +563,37 @@ function CCTVControl({currentPlaying, playVideo, showImage}) {
   const [showPlayer, setShowPlayer] = React.useState(true)
   const [highlightedKeys, setHighlightedKeys] = React.useState(new Set())
 
+  // Plan 8: "only static events" toggle. Re-fetches /api/movements with
+  // ?onlyStatic=true so the timeline shows only aircraft arrival/departure
+  // records written by scripts/static_detector.py.
+  const [onlyStatic, setOnlyStatic] = React.useState(false)
+
+  // Plan 8: per-camera today static-event counts, polled from /api/stats so
+  // we can show a small "今日抵達/離開" badge next to each camera name in the
+  // "Live" menu. Refreshed on mount + every 60 seconds.
+  const [staticTodayMap, setStaticTodayMap] = React.useState({});
+  React.useEffect(() => {
+    let cancelled = false;
+    async function refresh() {
+      try {
+        const r = await fetch('/api/stats');
+        const j = await r.json();
+        if (cancelled) return;
+        const map = {};
+        for (const cam of (j.cameras || [])) {
+          map[cam.cameraKey] = cam.staticToday || { arrivals: 0, departures: 0 };
+        }
+        setStaticTodayMap(map);
+      } catch (e) {
+        // Non-fatal; camera cards just won't show the badge until stats comes back.
+        console.warn('Failed to fetch /api/stats for staticToday:', e);
+      }
+    }
+    refresh();
+    const id = setInterval(refresh, 60000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   // Pagination state for infinite scroll
   const [hasMore, setHasMore] = React.useState(false)
   const [nextCursor, setNextCursor] = React.useState(null)
@@ -559,11 +615,12 @@ function CCTVControl({currentPlaying, playVideo, showImage}) {
   const deepLinkConsumed = React.useRef(false);
 
   function getServerData() {
-    console.log ('getServerData, mode=', mode)
+    console.log ('getServerData, mode=', mode, 'onlyStatic=', onlyStatic)
     setData({...init_data, status: 'fetching'})
     setHasMore(false)
     setNextCursor(null)
-    fetch(`/api/movements?mode=${mode}&limit=1000`)
+    const qs = onlyStatic ? `&onlyStatic=true` : '';
+    fetch(`/api/movements?mode=${mode}&limit=1000${qs}`)
       .then(res => res.json())
       .then(
         (result) => {
@@ -620,11 +677,12 @@ function CCTVControl({currentPlaying, playVideo, showImage}) {
   // Load more movements (next page)
   function loadMoreMovements() {
     if (!hasMore || !nextCursor || loadingMore) return;
-    
+
     console.log('loadMoreMovements, cursor=', nextCursor)
     setLoadingMore(true)
-    
-    fetch(`/api/movements?mode=${mode}&limit=1000&cursor=${nextCursor}`)
+
+    const qs = onlyStatic ? `&onlyStatic=true` : '';
+    fetch(`/api/movements?mode=${mode}&limit=1000&cursor=${nextCursor}${qs}`)
       .then(res => res.json())
       .then(
         (result) => {
@@ -646,7 +704,7 @@ function CCTVControl({currentPlaying, playVideo, showImage}) {
   }
 
   
-  useEffect(getServerData, [mode])
+  useEffect(getServerData, [mode, onlyStatic])
 
   // Setup SSE connection for real-time movement updates
   useEffect(() => {
@@ -668,6 +726,12 @@ function CCTVControl({currentPlaying, playVideo, showImage}) {
         
         // Helper function to check if movement should be displayed based on current mode
         const shouldDisplayMovement = (movement) => {
+          // Plan 8: "only static events" toggle. When on, SSE updates for
+          // non-static_event records should not appear; the next full
+          // refresh (triggered by useEffect[mode, onlyStatic]) will resync.
+          if (onlyStatic && movement.movement?.detection_status !== 'static_event') {
+            return false;
+          }
           if (mode === 'Movement') {
             // Show all movements in Movement mode
             return true;
@@ -808,9 +872,26 @@ function CCTVControl({currentPlaying, playVideo, showImage}) {
 
             <MenuPopover>
               <MenuList>
-                { data.cameras.filter(c => c.enable_streaming).map(c => 
-                  <MenuItem key={c.key} icon={<Video20Regular />}  onClick={() => playVideo(c.key)}>{c.name}</MenuItem>
-                )}
+                { data.cameras.filter(c => c.enable_streaming).map(c => {
+                  // Plan 8: append today's static_event counts (if any) so the
+                  // user can see at-a-glance whether any plane arrived/departed.
+                  const st = staticTodayMap[c.key];
+                  const a = st?.arrivals || 0;
+                  const d = st?.departures || 0;
+                  return (
+                    <MenuItem key={c.key} icon={<Video20Regular />} onClick={() => playVideo(c.key)}>
+                      <span>{c.name}</span>
+                      {(a + d) > 0 && (
+                        <span style={{ marginLeft: '8px', fontSize: '11px' }}>
+                          <span style={{ color: '#107c10', fontWeight: 600 }}>✈ {a}抵達</span>
+                          {d > 0 && (
+                            <span style={{ color: '#ca5010', fontWeight: 600, marginLeft: '4px' }}>/ {d}離開</span>
+                          )}
+                        </span>
+                      )}
+                    </MenuItem>
+                  );
+                })}
               </MenuList>
             </MenuPopover>
           </Menu>
@@ -828,6 +909,15 @@ function CCTVControl({currentPlaying, playVideo, showImage}) {
               </MenuList>
              </MenuPopover>
           </Menu>
+
+          {/* Plan 8: filter to show only static events (aircraft arrival/departure) */}
+          <Tooltip content={onlyStatic ? "只看靜止事件: 開" : "只看靜止事件: 關"} relationship="label">
+            <Switch
+              checked={onlyStatic}
+              onChange={(_, data) => setOnlyStatic(data.checked)}
+              label="✈"
+            />
+          </Tooltip>
 
         </ToolbarGroup>
 

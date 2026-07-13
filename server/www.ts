@@ -566,12 +566,29 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
         .get('/stats', async (ctx) => {
             // On-demand DB stats — scans movementdb to compute per-camera and per-day counts
             try {
-                const perCamera: { [cameraKey: string]: { total: number, oldest: number, newest: number, perDay: { [day: string]: number } } } = {};
+                // Plan 8: also tally today's static_event arrivals/departures per camera.
+                // System tz is Asia/Taipei (set globally per nvr-known-issues.md), so
+                // `new Date()` here reflects local "today" without further conversion.
+                const todayStart = (() => {
+                    const now = new Date();
+                    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+                })();
+
+                const perCamera: {
+                    [cameraKey: string]: {
+                        total: number; oldest: number; newest: number;
+                        perDay: { [day: string]: number };
+                        staticToday: { arrivals: number; departures: number };
+                    }
+                } = {};
 
                 for await (const [key, value] of movementdb.iterator()) {
                     const cam = value.cameraKey || 'unknown';
                     if (!perCamera[cam]) {
-                        perCamera[cam] = { total: 0, oldest: Number(key), newest: Number(key), perDay: {} };
+                        perCamera[cam] = {
+                            total: 0, oldest: Number(key), newest: Number(key),
+                            perDay: {}, staticToday: { arrivals: 0, departures: 0 },
+                        };
                     }
                     const entry = perCamera[cam];
                     entry.total++;
@@ -580,10 +597,24 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                     if (ts > entry.newest) entry.newest = ts;
                     const day = new Intl.DateTimeFormat('en-GB', { dateStyle: 'short' }).format(new Date(ts));
                     entry.perDay[day] = (entry.perDay[day] || 0) + 1;
+
+                    // Plan 8: count today's static_event records by parsing the
+                    // `notes` field set by static_detector.py
+                    // (e.g. "static_detection: airplane_arrival (static_detector trackId=a0)").
+                    if (value.detection_status === 'static_event' && ts >= todayStart) {
+                        const notes = (value as any).notes || '';
+                        if (notes.includes('airplane_arrival')) entry.staticToday.arrivals += 1;
+                        else if (notes.includes('airplane_departure')) entry.staticToday.departures += 1;
+                    }
                 }
 
                 // Add camera names from cache
-                const cameras: { cameraKey: string, cameraName: string, total: number, oldest: string, newest: string, perDay: { date: string, count: number }[] }[] = [];
+                const cameras: {
+                    cameraKey: string; cameraName: string; total: number;
+                    oldest: string; newest: string;
+                    perDay: { date: string; count: number }[];
+                    staticToday: { arrivals: number; departures: number };
+                }[] = [];
                 for (const [cameraKey, stats] of Object.entries(perCamera)) {
                     const cameraName = cameraCache[cameraKey]?.cameraEntry?.name || cameraKey;
                     const fmt = (ts: number) => ts > 0
@@ -597,7 +628,8 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                         newest: fmt(stats.newest),
                         perDay: Object.entries(stats.perDay)
                             .sort(([a], [b]) => a.localeCompare(b))
-                            .map(([date, count]) => ({ date, count }))
+                            .map(([date, count]) => ({ date, count })),
+                        staticToday: stats.staticToday,
                     });
                 }
 
@@ -1059,6 +1091,8 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
             const mode = ctx.query['mode'];
             const limitParam = ctx.query['limit'];
             const cursorParam = ctx.query['cursor']; // Last key from previous page for pagination
+            const onlyStaticParam = ctx.query['onlyStatic']; // Static-event-only filter (Plan 8)
+            const onlyStatic = onlyStaticParam === 'true' || onlyStaticParam === '1';
             const limit = limitParam ? Math.min(parseInt(limitParam as string, 10) || 1000, 10000) : 1000;
             
             const cameras: CameraEntryClient[] = Object.entries(cameraCache)
@@ -1104,6 +1138,10 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
 
                     for await (const [key, value] of movementdb.iterator(iteratorOpts)) {
                         const { detection_output } = value;
+
+                        // Plan 8: ?onlyStatic=true skips non-static-event records so the
+                        // UI's "只看靜止事件" toggle can re-use this endpoint.
+                        if (onlyStatic && value.detection_status !== 'static_event') continue;
 
                         let tags = detection_output?.tags || null;
                         if (mode === 'Filtered') {

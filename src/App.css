@@ -291,6 +291,17 @@ html, body, #root {
   animation: processing-pulse 2s ease-in-out infinite;
 }
 
+/* Plan 8: visually distinguish static_event rows (aircraft arrival/departure
+   produced by scripts/static_detector.py). Light tinted background so they
+   pop out from regular motion rows without being noisy. */
+.timeline-item.static-event {
+  background: #eaf6ff;
+  border-left: 3px solid #0078d4;
+}
+.timeline-item.static-event:hover {
+  background: #d9eefe;
+}
+
 .timeline-item::before {
   content: '';
   position: absolute;

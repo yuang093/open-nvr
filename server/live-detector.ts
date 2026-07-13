@@ -92,8 +92,10 @@ function initDetector() {
         }
     });
 
-    detectorProc.stderr?.on('data', (data: Buffer) => {
-        // Log detector errors silently
+    detectorProc.stderr?.on('data', (_data: Buffer) => {
+        // Log detector errors silently (intentionally ignored for now — see fix
+        // in this repo's history for live-detector noise).
+        void _data;
     });
 
     detectorProc.on('close', () => {
