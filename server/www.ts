@@ -598,13 +598,21 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                     const day = new Intl.DateTimeFormat('en-GB', { dateStyle: 'short' }).format(new Date(ts));
                     entry.perDay[day] = (entry.perDay[day] || 0) + 1;
 
-                    // Plan 8: count today's static_event records by parsing the
-                    // `notes` field set by static_detector.py
-                    // (e.g. "static_detection: airplane_arrival (static_detector trackId=a0)").
+                    // Plan 8: count today's static_event records. Read the dedicated
+                    // `event` field (added 2026-07-13) when present; fall back to
+                    // parsing the human-readable `notes` string for older records
+                    // written before the dedicated field existed.
                     if (value.detection_status === 'static_event' && ts >= todayStart) {
-                        const notes = (value as any).notes || '';
-                        if (notes.includes('airplane_arrival')) entry.staticToday.arrivals += 1;
-                        else if (notes.includes('airplane_departure')) entry.staticToday.departures += 1;
+                        const ev = (value as any).event as string | undefined;
+                        if (ev === 'arrived') {
+                            entry.staticToday.arrivals += 1;
+                        } else if (ev === 'departed') {
+                            entry.staticToday.departures += 1;
+                        } else {
+                            const notes = (value as any).notes || '';
+                            if (notes.includes('airplane_arrival')) entry.staticToday.arrivals += 1;
+                            else if (notes.includes('airplane_departure')) entry.staticToday.departures += 1;
+                        }
                     }
                 }
 
@@ -832,6 +840,11 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                 consecutivePollsWithoutMovement: 0,
                 processing_state: 'completed',
                 detection_status: 'static_event',
+                // Plan 8 bugfix: store the event type as a dedicated top-level field
+                // so /api/stats can tally arrivals/departures without parsing the
+                // human-readable `notes` string. Values: 'arrived' | 'departed'.
+                event: eventName,
+                track_id: trackId,
                 detection_started_at: now,
                 detection_ended_at: now,
                 processing_completed_at: now,
@@ -1201,7 +1214,12 @@ stream${n + segmentInt - preseq}.ts`).join("\n") + "\n" + "#EXT-X-ENDLIST\n";
                                     ...(value.frames_sent_to_ml !== undefined && { frames_sent_to_ml: value.frames_sent_to_ml }),
                                     ...(value.frames_received_from_ml !== undefined && { frames_received_from_ml: value.frames_received_from_ml }),
                                     ...(value.ml_total_processing_time_ms !== undefined && { ml_total_processing_time_ms: value.ml_total_processing_time_ms }),
-                                    ...(value.ml_max_processing_time_ms !== undefined && { ml_max_processing_time_ms: value.ml_max_processing_time_ms })
+                                    ...(value.ml_max_processing_time_ms !== undefined && { ml_max_processing_time_ms: value.ml_max_processing_time_ms }),
+                                    // Plan 8 bugfix: surface the `notes` field so the UI badge can
+                                    // distinguish airplane_arrival vs airplane_departure. Before
+                                    // this fix the field existed in DB but was silently dropped
+                                    // by the response serializer.
+                                    ...(value.notes && { notes: value.notes })
                                 }
                             });
                         }

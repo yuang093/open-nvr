@@ -390,7 +390,15 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
 
   const handleBadgeClick = (e, item, tag) => {
     e.stopPropagation();
-    const frameUrl = tag.maxProbabilityImage 
+    // Plan 8 bugfix: static_event records have no associated frame/segment —
+    // /image/{key} returns 400 Bad Request. Show a brief info hint instead
+    // so the user understands why nothing loads.
+    if (item.detection_status === 'static_event') {
+      const noteText = (typeof item.notes === 'string' && item.notes) || 'Static event (no frame captured)';
+      console.info(`[static_event] ${item.key}: ${noteText}`);
+      return;
+    }
+    const frameUrl = tag.maxProbabilityImage
       ? `/frame/${item.key}/${tag.maxProbabilityImage}`
       : `/image/${item.key}`;
     showImage(frameUrl);
@@ -407,20 +415,23 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
 
   const renderBadges = (item) => {
     // Plan 8: prepend a static_event badge when the static_detector wrote this
-    // record (aircraft arrival/departure at apron cameras). The detail dialog
-    // already shows the full notes field, so we just label it here.
+    // record (aircraft arrival/departure at apron cameras). Prefer the dedicated
+    // `event` field; fall back to parsing `notes` for older records.
     const isStaticEvent = item.detection_status === 'static_event';
     const notes = (typeof item.notes === 'string') ? item.notes : '';
+    const ev = (typeof item.event === 'string') ? item.event : '';
+    const isArrival = ev === 'arrived' || notes.includes('airplane_arrival');
+    const isDeparture = ev === 'departed' || notes.includes('airplane_departure');
     const staticLabel = isStaticEvent
-      ? (notes.includes('airplane_arrival') ? '✈️ Static: arrival'
-        : notes.includes('airplane_departure') ? '✈️ Static: departure'
+      ? (isArrival ? '✈️ Static: arrival'
+        : isDeparture ? '✈️ Static: departure'
         : '✈️ Static')
       : null;
     const staticBadge = staticLabel ? (
       <Badge
         key="static-event"
         appearance="filled"
-        color={notes.includes('airplane_arrival') ? 'success' : 'warning'}
+        color={isArrival ? 'success' : 'warning'}
         style={{ fontSize: '10px', padding: '2px 5px' }}
         title={notes || 'Static event'}
       >
@@ -442,6 +453,9 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
     // Sort and display tags
     const sortedTags = [...tags].sort((a, b) => b.maxProbability - a.maxProbability);
 
+    // Plan 8 bugfix: static_event has no associated frame — render the tag as
+    // a non-interactive badge so users don't see a black panel after clicking.
+    const isClickable = item.detection_status !== 'static_event';
     const tagBadges = sortedTags.slice(0, 5).map((tag, idx) => (
       <Badge
         key={idx}
@@ -450,9 +464,10 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
         style={{
           fontSize: '10px',
           padding: '2px 5px',
-          cursor: 'pointer'
+          cursor: isClickable ? 'pointer' : 'default'
         }}
-        onClick={(e) => handleBadgeClick(e, item, tag)}
+        title={isClickable ? undefined : 'Static event — no frame captured'}
+        onClick={isClickable ? (e) => handleBadgeClick(e, item, tag) : undefined}
       >
         {tag.tag} {(tag.maxProbability * 100).toFixed(0)}%
       </Badge>
