@@ -383,19 +383,26 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
   const handlePlayClick = (e, item) => {
     e.stopPropagation();
     const camera = cameras?.find(c => c.key === item.cameraKey);
-    if (camera && item.startSegment) {
+    if (!camera) return;
+    if (item.startSegment) {
       playVideo(item.cameraKey, item.key, item.startSegment, item.seconds, camera.segments_prior_to_movement, camera.segments_post_movement, item.lhs_seg_duration_seq);
+    } else if (item.detection_status === 'static_event') {
+      // Plan 8 bugfix: static_event has no recorded segment — fall back to the
+      // camera live stream so the user can see the current apron state instead
+      // of an empty video panel.
+      playVideo(item.cameraKey);
     }
   };
 
   const handleBadgeClick = (e, item, tag) => {
     e.stopPropagation();
-    // Plan 8 bugfix: static_event records have no associated frame/segment —
-    // /image/{key} returns 400 Bad Request. Show a brief info hint instead
-    // so the user understands why nothing loads.
+    // Plan 8 bugfix: static_event records have no associated frame/segment.
+    // Mirror handlePlayClick's live-stream fallback so tag-badge clicks also
+    // show something useful (the camera's current state).
     if (item.detection_status === 'static_event') {
       const noteText = (typeof item.notes === 'string' && item.notes) || 'Static event (no frame captured)';
       console.info(`[static_event] ${item.key}: ${noteText}`);
+      playVideo(item.cameraKey);
       return;
     }
     const frameUrl = tag.maxProbabilityImage
@@ -453,9 +460,9 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
     // Sort and display tags
     const sortedTags = [...tags].sort((a, b) => b.maxProbability - a.maxProbability);
 
-    // Plan 8 bugfix: static_event has no associated frame — render the tag as
-    // a non-interactive badge so users don't see a black panel after clicking.
-    const isClickable = item.detection_status !== 'static_event';
+    // Plan 8 bugfix: clicking a static_event tag now falls back to live camera
+    // (see handleBadgeClick) — keep the badge clickable so users have an
+    // intuitive way to inspect the apron.
     const tagBadges = sortedTags.slice(0, 5).map((tag, idx) => (
       <Badge
         key={idx}
@@ -464,10 +471,10 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
         style={{
           fontSize: '10px',
           padding: '2px 5px',
-          cursor: isClickable ? 'pointer' : 'default'
+          cursor: 'pointer'
         }}
-        title={isClickable ? undefined : 'Static event — no frame captured'}
-        onClick={isClickable ? (e) => handleBadgeClick(e, item, tag) : undefined}
+        title={item.detection_status === 'static_event' ? 'Static event — click to view live camera' : undefined}
+        onClick={(e) => handleBadgeClick(e, item, tag)}
       >
         {tag.tag} {(tag.maxProbability * 100).toFixed(0)}%
       </Badge>
@@ -533,11 +540,11 @@ function MovementTimeline({ movements, cameras, currentPlaying, highlightedKeys,
             <div className="timeline-badges">
               {renderBadges(item)}
             </div>
-            <Tooltip content="Play movement" relationship="label">
-              <button 
+            <Tooltip content={item.detection_status === 'static_event' ? 'View live camera (no recorded segment for static event)' : 'Play movement'} relationship="label">
+              <button
                 className="timeline-play-btn"
                 onClick={(e) => handlePlayClick(e, item)}
-                disabled={!item.startSegment}
+                disabled={!item.startSegment && item.detection_status !== 'static_event'}
               >
                 <Play20Filled />
               </button>
