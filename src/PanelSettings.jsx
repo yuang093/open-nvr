@@ -850,7 +850,6 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
                         class filter override. Leaving "Use Global Default" checked removes
                         any previous per-camera override.
                     </Text>
-                    </Button>
 
                     <Divider><b>Movement processing</b></Divider>
                     
