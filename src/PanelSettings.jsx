@@ -216,7 +216,15 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
         }
     }, [panel.open, data?.config?.settings?.aiEnabledClasses]);
 
-    // Sync per-camera class filter when a different camera is selected
+    // Sync per-camera class filter when a different camera is selected.
+    //
+    // The deps include `panel.values?.key` so the effect re-fires whenever
+    // the user clicks a different camera in the menu — even when both
+    // cameras have `enabledClasses: null`. Without this, cameraClasses state
+    // would leak the previous camera's seed value into the new panel, making
+    // "Use Global Default" appear unchecked for a camera that actually has
+    // no override, and the seed value shown in the checkboxes could be saved
+    // over the new camera's intended config.
     React.useEffect(() => {
         if (panel.open && panel.key) {
             // panel.values.enabledClasses holds the per-camera override (null = use global)
@@ -224,7 +232,7 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
             if (c) setCameraClasses({ individual: c.individual || [], others: !!c.others });
             else setCameraClasses(null);
         }
-    }, [panel.open, panel.key, panel.values?.enabledClasses]);
+    }, [panel.open, panel.key, panel.values?.key, panel.values?.enabledClasses]);
 
     const INDIVIDUAL_CLASSES = [
         { id: 0, label: 'person' },
@@ -731,10 +739,15 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
                     </div>
 
                     <Divider><b>Global AI Detection Defaults</b></Divider>
-                    <Text size={200} style={{color: '#666'}}>
-                        Which YOLO classes to keep in detection output. Applies to all cameras
-                        that don't have their own override below. Changes take effect on the
-                        next movement.
+                    <Alert intent="info" style={{marginTop: "4px"}}>
+                        <Text size={200}>
+                            <b>These settings apply to ALL cameras</b> that don't have their own
+                            per-camera override below. Use this for the shared default; configure
+                            per-camera overrides in the "Camera AI Classes" section further down.
+                        </Text>
+                    </Alert>
+                    <Text size={200} style={{color: '#666', marginTop: '4px'}}>
+                        Changes take effect on the next movement.
                     </Text>
                     {globalClasses && (
                       <div style={{display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '4px 12px', marginTop: '4px'}}>
