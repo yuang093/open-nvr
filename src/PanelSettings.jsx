@@ -380,6 +380,14 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
     function savePanel(event, ctx) {
         const {key} =  ctx && typeof ctx === 'object' ? ctx : {}
 
+        // Commit the per-camera class filter into panel.values so a single
+        // click on the main Save button persists it. Previously the user had
+        // to also click "Save Camera Override" first, which silently dropped
+        // their override when omitted. Same shape as saveCameraClasses().
+        const merged = (panel.key === 'edit')
+            ? { ...panel.values, enabledClasses: cameraClasses }
+            : panel.values;
+
         setError(null)
         setPanel(prev => ({...prev, loading: true}))
         fetch(`/api/${panel.key === 'settings' ? 'settings' : `camera/${panel.values.key || 'new'}`}${key && panel.values.key ? `?delopt=${key}` : ''}`, {
@@ -389,7 +397,7 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify(panel.values)
+        body: JSON.stringify(merged)
         }).then(res => {
         if (res.ok) {
             console.log(`created success : ${JSON.stringify(res)}`)
@@ -837,12 +845,11 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
                         />
                       </div>
                     )}
-                    <Button
-                      appearance="subtle"
-                      disabled={!panel.values.key}
-                      onClick={saveCameraClasses}
-                    >
-                      Save Camera Override
+                    <Text size={200} style={{color: '#666', marginTop: '8px'}}>
+                        Click the main <b>Save</b> button below to commit this camera's
+                        class filter override. Leaving "Use Global Default" checked removes
+                        any previous per-camera override.
+                    </Text>
                     </Button>
 
                     <Divider><b>Movement processing</b></Divider>
