@@ -234,16 +234,19 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
         }
     }, [panel.open, panel.key, panel.values?.key, panel.values?.enabledClasses]);
 
+    // Bilingual labels for the class filter checkboxes. Live bbox labels stay
+    // American English (YOLO COCO class names) — this mapping is for the
+    // settings UI only.
     const INDIVIDUAL_CLASSES = [
-        { id: 0, label: 'person' },
-        { id: 1, label: 'bicycle' },
-        { id: 2, label: 'car' },
-        { id: 3, label: 'motorcycle' },
-        { id: 4, label: 'airplane' },
-        { id: 5, label: 'bus' },
-        { id: 6, label: 'train' },
-        { id: 7, label: 'truck' },
-        { id: 8, label: 'boat' },
+        { id: 0, label: 'person',       zh: '人' },
+        { id: 1, label: 'bicycle',      zh: '腳踏車' },
+        { id: 2, label: 'car',          zh: '汽車' },
+        { id: 3, label: 'motorcycle',   zh: '機車' },
+        { id: 4, label: 'airplane',     zh: '飛機' },
+        { id: 5, label: 'bus',          zh: '公車' },
+        { id: 6, label: 'train',        zh: '火車' },
+        { id: 7, label: 'truck',        zh: '卡車' },
+        { id: 8, label: 'boat',         zh: '船' },
     ];
 
     function toggleIndividual(setClasses, current, classId) {
@@ -762,7 +765,7 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
                         {INDIVIDUAL_CLASSES.map(c => (
                           <Checkbox
                             key={c.id}
-                            label={c.label}
+                            label={<>{c.label} <span style={{color: '#888'}}>{c.zh}</span></>}
                             checked={globalClasses.individual.includes(c.id)}
                             onChange={() => { toggleIndividual(setGlobalClasses, globalClasses, c.id); setGlobalClassesDirty(true); }}
                           />
@@ -826,7 +829,7 @@ export function PanelSettings({panel, setPanel, data, getServerData}) {
                         {INDIVIDUAL_CLASSES.map(c => (
                           <Checkbox
                             key={c.id}
-                            label={c.label}
+                            label={<>{c.label} <span style={{color: '#888'}}>{c.zh}</span></>}
                             checked={cameraClasses.individual.includes(c.id)}
                             onChange={() => setCameraClasses(prev => {
                                 const ind = prev?.individual || [];
